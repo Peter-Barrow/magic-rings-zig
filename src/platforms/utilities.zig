@@ -13,13 +13,9 @@ pub const MagicRingBase = struct {
     mirror: []align(std.mem.page_size) u8,
 };
 
-pub const BufferMode = enum {
-    Owner,
-    Client,
-};
-
-pub const MagicRingError = error{
-    MapsNotAdjacent,
+pub const AccessMode = enum {
+    ReadOnly,
+    ReadWrite,
 };
 
 /// Calculate the number of pages required to fit "count" elemnts of type T
@@ -60,6 +56,16 @@ test calculateNumberOfPages {
     requested_elems = 1500;
     minimum_number_of_pages = calculateNumberOfPages(T, requested_elems);
     try std.testing.expectEqual(2, minimum_number_of_pages);
+}
+
+pub fn ensureStartsWithSlash(name: []const u8) ![]const u8 {
+    var buffer: [std.fs.MAX_NAME_BYTES]u8 = undefined;
+    const slash: u8 = .{'/'}[0];
+    const first_char: u8 = name[0];
+    if (first_char == slash) {
+        return name;
+    }
+    return try std.fmt.bufPrint(&buffer, "/{s}", .{name});
 }
 
 pub fn makeTerminatedString(name: []const u8) ![*:0]const u8 {

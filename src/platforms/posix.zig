@@ -45,13 +45,13 @@ pub fn create(name: []const u8, size: u32) CreateError!utils.MagicRingBase {
     const fd = switch (tag) {
         .linux, .freebsd => try std.posix.memfd_create(name, std.posix.MFD.ALLOW_SEALING),
         else => blk: {
-            const name_z = try utils.makeTerminatedString(name);
+            const name_z = try utils.makeTerminatedString(try utils.ensureStartsWithSlash(name));
             const flags: std.c.O = .{
                 .ACCMODE = .RDWR,
                 .CREAT = true,
                 .EXCL = true,
             };
-            const new_fd = try std.c.shm_open(name_z, @bitCast(flags), 0o666);
+            const new_fd = std.c.shm_open(name_z, @bitCast(flags), 0o666);
 
             const err: std.posix.E = @enumFromInt(std.c._errno().*);
             switch (err) {
@@ -96,18 +96,26 @@ pub fn create(name: []const u8, size: u32) CreateError!utils.MagicRingBase {
 
 pub const ConnectError = std.posix.FStatError || std.fs.File.OpenError || std.posix.MMapError;
 
-pub fn connect(name: []const u8) ConnectError!utils.MagicRingBase {
-    // const fd = try std.posix.open(name, .{ .ACCMODE = .RDWR }, 0o666);
+pub fn connect(name: []const u8, access: utils.AccessMode) ConnectError!utils.MagicRingBase {
+    const flags: std.c.O = switch (access) {
+        .ReadOnly => .{
+            .ACCMODE = .RDONLY,
+        },
+        .ReadWrite => .{
+            .ACCMODE = .RDWR,
+        },
+    };
+
+    const permissions: std.posix.mode_t = switch (access) {
+        .ReadOnly => 0o444,
+        .ReadWrite => 0o666,
+    };
 
     const handle: std.fs.File = switch (tag) {
         .linux, .freebsd => try std.fs.openFileAbsolute(name, .{}),
         else => blk: {
-            const name_z = try utils.makeTerminatedString(name);
-            const flags: std.c.O = .{
-                .ACCMODE = .RDONLY,
-            };
-            const handle = try std.c.shm_open(name_z, @bitCast(flags), 0o666); // TODO: set correct octal for readonly
-
+            const name_z = try utils.makeTerminatedString(try utils.ensureStartsWithSlash(name));
+            const handle = std.c.shm_open(name_z, @bitCast(flags), permissions);
             const new_file: std.fs.File = .{
                 .handle = handle,
             };
@@ -130,7 +138,12 @@ pub fn connect(name: []const u8) ConnectError!utils.MagicRingBase {
     const fd = handle.handle;
 
     const stat = try std.posix.fstat(fd);
-    const maps: utils.Maps = try magicRingFromFD(fd, @intCast(stat.size), std.posix.PROT.READ);
+
+    const flags_protection: u32 = switch (access) {
+        .ReadOnly => std.posix.PROT.READ,
+        .ReadWrite => std.posix.PROT.READ | std.posix.PROT.WRITE,
+    };
+    const maps: utils.Maps = try magicRingFromFD(fd, @intCast(stat.size), flags_protection);
 
     return .{
         .name = name,
@@ -150,7 +163,6 @@ pub fn close(map: *utils.MagicRingBase) std.posix.UnlinkError!void {
     // std.posix.close(map.handle);
 
     switch (tag) {
-        // .linux, .freebsd => try std.posix.unlink(map.name),
         .linux, .freebsd => std.posix.close(map.handle),
         else => blk: {
             const name_z = try utils.makeTerminatedString(map.name);
@@ -179,7 +191,7 @@ test "posix wraparound" {
 
     const n_elems: u32 = @intCast(std.mem.page_size * n_pages);
 
-    const buffer_name = "testbuffer";
+    const buffer_name = "testbuffer_libc2";
     var maps: utils.MagicRingBase = try create(buffer_name, n_elems);
 
     var map_as_T: [*]T = @ptrCast(maps.buffer);
@@ -235,7 +247,8 @@ test "posix wraparound" {
         buffer[1022..1030],
     );
 
-    var connection = try if (maps.path) |p| connect(p) else connect(maps.name);
+    var connection = try if (maps.path) |p| connect(p, .ReadWrite) else connect(maps.name, .ReadWrite);
+    // var connection = try if (maps.path) |p| connect(p, .ReadOnly) else connect(maps.name, .ReadOnly);
 
     var connection_as_T: [*]T = @ptrCast(connection.buffer);
     var connection_buffer: []T = connection_as_T[0 .. 2 * n_elems];
@@ -246,6 +259,15 @@ test "posix wraparound" {
         connection_buffer[1022..1030],
         buffer[1022..1030],
     );
+
+    std.debug.print(
+        "mirror:\n\t{any}\nbuffer:\n\t{any}\n",
+        .{ connection_buffer[1022..1030], buffer[1022..1030] },
+    );
+
+    for (n + 2..n + 4) |i| {
+        connection_buffer[i] = @intCast(i);
+    }
 
     std.debug.print(
         "mirror:\n\t{any}\nbuffer:\n\t{any}\n",

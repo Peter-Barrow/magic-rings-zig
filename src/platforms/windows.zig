@@ -221,10 +221,10 @@ pub fn create(name: []const u8, size: u32) !utils.MagicRingBase {
     };
 }
 
-fn openFileDescriptor(name: [*:0]const u8) !Handle {
+fn openFileDescriptor(name: [*:0]const u8, flags: winMem.FILE_MAP) !Handle {
     // fn openFileDescriptor(name: []const u8) winFoundation.WIN32_ERROR!Handle {
     //  var handle: Handle = undefined;
-    if (winMem.OpenFileMappingA(@bitCast(winMem.FILE_MAP_READ), winZig.FALSE, name)) |h| {
+    if (winMem.OpenFileMappingA(@bitCast(flags), winZig.FALSE, name)) |h| {
         return h;
     }
 
@@ -233,13 +233,29 @@ fn openFileDescriptor(name: [*:0]const u8) !Handle {
     }
 }
 
-pub fn connect(name: []const u8) !utils.MagicRingBase {
+pub fn connect(name: []const u8, access: utils.AccessMode) !utils.MagicRingBase {
     const name_z = try utils.makeTerminatedString(name);
-    const handle = try openFileDescriptor(name_z);
+
+    const flags_handle: winMem.FILE_MAP = switch (access) {
+        .ReadOnly => .{
+            .READ = 1,
+        },
+        .ReadWrite => .{
+            .READ = 1,
+            .WRITE = 1,
+        },
+    };
+
+    const handle = try openFileDescriptor(name_z, flags_handle);
 
     var size: i64 = 0;
     _ = std.os.windows.kernel32.GetFileSizeEx(handle, @ptrCast(&size));
-    const maps: utils.Maps = try magicRingFromHandle(handle, @intCast(size), winMem.PAGE_READONLY);
+
+    const flags_protection: winMem.PAGE_PROTECTION_FLAGS = switch (access) {
+        .ReadOnly => winMem.PAGE_READONLY,
+        .ReadWrite => winMem.PAGE_READWRITE,
+    };
+    const maps: utils.Maps = try magicRingFromHandle(handle, @intCast(size), flags_protection);
 
     return .{
         .name = name,
@@ -332,7 +348,7 @@ test "windows wraparound" {
         buffer[n - 2 .. n + 6],
     );
 
-    var connection = try connect(name);
+    var connection = try connect(name, .ReadWrite);
     var connection_as_T: [*]T = @ptrCast(connection.buffer);
     var connection_buffer: []T = connection_as_T[0 .. 2 * n_elems];
 
@@ -342,6 +358,15 @@ test "windows wraparound" {
         connection_buffer[n - 2 .. n + 6],
         buffer[n - 2 .. n + 6],
     );
+
+    std.debug.print(
+        "mirror:\n\t{any}\nbuffer:\n\t{any}\n",
+        .{ connection_buffer[n - 2 .. n + 6], buffer[n - 2 .. n + 6] },
+    );
+
+    for (n + 4..n + 6) |i| {
+        connection_buffer[i] = @intCast(i);
+    }
 
     std.debug.print(
         "mirror:\n\t{any}\nbuffer:\n\t{any}\n",
