@@ -3,7 +3,7 @@
 **Magic-Rings-Zig** is a small library to implement *magic ring buffers* available for Linux and Unix based platforms supporting either `memfd_create` or `shm_open` and `shm_unlink` as well as Windows.
 This ring buffer implementation makes use of a second mapping of the underlying data to allow reading off the end of buffer allocation and letting the OS and hardware take care of getting your cursor to wraparound to the beginning of the buffer.
 
-**STATUS: Unstable but feature complete (for now...)** This library does everything that I need at the moment not to stay it won't change in the future. It has been built and tested with Zig 0.13.0 with plans to keep it line with subsequent releases.
+**STATUS: Unstable and feature incomplete** The core of this library does everything that I need at the moment but the user facing layer needs finishing. The core functionality covers everything that I need but to be most useful this needs a complete implementation for structure-of-arrays and methods to manage which buffers are available. It has been built and tested with Zig 0.13.0 with plans to keep it line with subsequent releases.
 
 ## Overview
 
