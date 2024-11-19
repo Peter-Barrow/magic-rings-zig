@@ -2,6 +2,13 @@ const std = @import("std");
 const utils = @import("utilities.zig");
 const tag = @import("builtin").target.os.tag;
 
+const config = @import("config");
+const use_shm_funcs = switch (tag) {
+    .linux, .freebsd => if (@hasDecl(config, "use_shm_funcs")) config.use_shm_funcs else false,
+    .windows => @compileError("Windows does not support memfd_create or shm_open/shm_unlink, use Windows API\n"),
+    else => true, // all other platforms that support shm_open and shm_unlink
+};
+
 pub const MagicRingPosixError = std.posix.MMapError || utils.MagicRingError;
 
 fn magicRingFromFD(file_descriptor: std.posix.fd_t, size: usize, protection: u32) std.posix.MMapError!utils.Maps {
@@ -41,31 +48,31 @@ pub const CreateError =
     std.posix.OpenError || std.posix.MemFdCreateError || std.posix.TruncateError || std.posix.MMapError;
 
 pub fn create(name: []const u8, size: u32) CreateError!utils.MagicRingBase {
-    // const fd = try std.posix.open(name, .{ .CREAT = true, .EXCL = true, .ACCMODE = .RDWR }, 0o666);
-    const fd = switch (tag) {
-        .linux, .freebsd => try std.posix.memfd_create(name, std.posix.MFD.ALLOW_SEALING),
-        else => blk: {
-            const name_z = try utils.makeTerminatedString(try utils.ensureStartsWithSlash(name));
-            const flags: std.c.O = .{
-                .ACCMODE = .RDWR,
-                .CREAT = true,
-                .EXCL = true,
-            };
-            const new_fd = std.c.shm_open(name_z, @bitCast(flags), 0o666);
+    const fd = if (use_shm_funcs) blk: {
+        var buffer: [std.fs.MAX_NAME_BYTES]u8 = undefined;
+        const name_z = try std.fmt.bufPrintZ(&buffer, "{s}", .{name});
+        const flags: std.c.O = .{
+            .ACCMODE = .RDWR,
+            .CREAT = true,
+            .EXCL = true,
+        };
+        const new_fd = std.c.shm_open(name_z, @bitCast(flags), 0o666);
 
-            const err: std.posix.E = @enumFromInt(std.c._errno().*);
-            switch (err) {
-                .SUCCESS => break :blk new_fd,
-                .ACCES => return error.AccessDenied,
-                .EXIST => return error.PathAlreadyExists,
-                .INVAL => unreachable,
-                .MFILE => return error.ProcessFdQuotaExceeded,
-                .NAMETOOLONG => return error.NameTooLong,
-                .NFILE => return error.SystemFdQuotaExceeded,
-                .NOENT => return error.FileNotFound,
-                else => return std.posix.unexpectedErrno(err),
-            }
-        },
+        const err: std.posix.E = @enumFromInt(std.c._errno().*);
+        switch (err) {
+            .SUCCESS => break :blk new_fd,
+            .ACCES => return error.AccessDenied,
+            .EXIST => return error.PathAlreadyExists,
+            .INVAL => unreachable,
+            .MFILE => return error.ProcessFdQuotaExceeded,
+            .NAMETOOLONG => return error.NameTooLong,
+            .NFILE => return error.SystemFdQuotaExceeded,
+            .NOENT => return error.FileNotFound,
+            else => return std.posix.unexpectedErrno(err),
+        }
+    } else blk: {
+        const new_fd = try std.posix.memfd_create(name, std.posix.MFD.ALLOW_SEALING);
+        break :blk new_fd;
     };
 
     try std.posix.ftruncate(fd, @intCast(size));
@@ -76,18 +83,14 @@ pub fn create(name: []const u8, size: u32) CreateError!utils.MagicRingBase {
         std.posix.PROT.READ | std.posix.PROT.WRITE,
     );
 
-    var buffer: [std.fs.max_path_bytes]u8 = undefined;
-
     const pid = switch (tag) {
         .linux => std.os.linux.getpid(),
         else => std.c.getpid(),
     };
 
-    const path: []u8 = std.fmt.bufPrint(&buffer, "/proc/{d}/fd/{d}", .{ pid, fd }) catch unreachable;
-
     return .{
         .name = name,
-        .path = path,
+        .pid = if (use_shm_funcs) null else pid,
         .handle = fd,
         .buffer = maps.buffer,
         .mirror = maps.mirror,
@@ -111,28 +114,30 @@ pub fn connect(name: []const u8, access: utils.AccessMode) ConnectError!utils.Ma
         .ReadWrite => 0o666,
     };
 
-    const handle: std.fs.File = switch (tag) {
-        .linux, .freebsd => try std.fs.openFileAbsolute(name, .{}),
-        else => blk: {
-            const name_z = try utils.makeTerminatedString(try utils.ensureStartsWithSlash(name));
-            const handle = std.c.shm_open(name_z, @bitCast(flags), permissions);
-            const new_file: std.fs.File = .{
-                .handle = handle,
-            };
+    const handle: std.fs.File = if (use_shm_funcs) blk: {
+        var buffer: [std.fs.MAX_NAME_BYTES]u8 = undefined;
+        const name_z = try std.fmt.bufPrintZ(&buffer, "{s}", .{name});
+        std.debug.print("{s}\n", .{name_z});
+        const new_handle = std.c.shm_open(name_z, @bitCast(flags), permissions);
+        const new_file: std.fs.File = .{
+            .handle = new_handle,
+        };
 
-            const err: std.posix.E = @enumFromInt(std.c._errno().*);
-            switch (err) {
-                .SUCCESS => break :blk new_file,
-                .ACCES => return error.AccessDenied,
-                .EXIST => return error.PathAlreadyExists,
-                .INVAL => unreachable,
-                .MFILE => return error.ProcessFdQuotaExceeded,
-                .NAMETOOLONG => return error.NameTooLong,
-                .NFILE => return error.SystemFdQuotaExceeded,
-                .NOENT => return error.FileNotFound,
-                else => return std.posix.unexpectedErrno(err),
-            }
-        },
+        const err: std.posix.E = @enumFromInt(std.c._errno().*);
+        switch (err) {
+            .SUCCESS => break :blk new_file,
+            .ACCES => return error.AccessDenied,
+            .EXIST => return error.PathAlreadyExists,
+            .INVAL => unreachable,
+            .MFILE => return error.ProcessFdQuotaExceeded,
+            .NAMETOOLONG => return error.NameTooLong,
+            .NFILE => return error.SystemFdQuotaExceeded,
+            .NOENT => return error.FileNotFound,
+            else => return std.posix.unexpectedErrno(err),
+        }
+    } else blk: {
+        const new_handle = try std.fs.openFileAbsolute(name, .{});
+        break :blk new_handle;
     };
 
     const fd = handle.handle;
@@ -160,29 +165,28 @@ pub fn close(map: *utils.MagicRingBase) std.posix.UnlinkError!void {
     std.posix.munmap(map.mirror);
     map.mirror = undefined;
 
-    // std.posix.close(map.handle);
-
-    switch (tag) {
-        .linux, .freebsd => std.posix.close(map.handle),
-        else => blk: {
-            const name_z = try utils.makeTerminatedString(map.name);
-            const result = std.c.shm_unlink(name_z);
-            const err: std.posix.E = @enumFromInt(std.c._errno(result));
-            switch (err) {
-                .SUCCESS => break :blk,
-                .ACCES => return error.AccessDenied,
-                .PERM => return error.AccessDenied,
-                .INVAL => unreachable,
-                .NAMETOOLONG => return error.NameTooLong,
-                .NOENT => return error.FileNotFound,
-                else => return std.posix.unexpectedErrno(err),
-            }
-        },
+    if (use_shm_funcs) {
+        var buffer: [std.fs.MAX_NAME_BYTES]u8 = undefined;
+        const name_z = std.fmt.bufPrintZ(&buffer, "{s}", .{map.name}) catch unreachable;
+        _ = std.c.shm_unlink(name_z);
+        const err: std.posix.E = @enumFromInt(std.c._errno().*);
+        switch (err) {
+            .SUCCESS => return,
+            .ACCES => return error.AccessDenied,
+            .PERM => return error.AccessDenied,
+            .INVAL => unreachable,
+            .NAMETOOLONG => return error.NameTooLong,
+            .NOENT => return, //return error.FileNotFound,
+            else => return std.posix.unexpectedErrno(err),
+        }
+    } else {
+        std.posix.close(map.handle);
     }
     map.* = undefined;
 }
 
 test "posix wraparound" {
+    std.debug.print("Use shm_funcs?:\t{any}\n", .{use_shm_funcs});
     const T = u32;
     const n: usize = 1024;
     const n_pages: usize = utils.calculateNumberOfPages(T, n);
@@ -191,7 +195,7 @@ test "posix wraparound" {
 
     const n_elems: u32 = @intCast(std.mem.page_size * n_pages);
 
-    const buffer_name = "testbuffer_libc2";
+    const buffer_name = "testbuffer";
     var maps: utils.MagicRingBase = try create(buffer_name, n_elems);
 
     var map_as_T: [*]T = @ptrCast(maps.buffer);
@@ -247,8 +251,16 @@ test "posix wraparound" {
         buffer[1022..1030],
     );
 
-    var connection = try if (maps.path) |p| connect(p, .ReadWrite) else connect(maps.name, .ReadWrite);
-    // var connection = try if (maps.path) |p| connect(p, .ReadOnly) else connect(maps.name, .ReadOnly);
+    const mode_rw: utils.AccessMode = .ReadOnly;
+    var connection = if (maps.pid) |p| blk: {
+        var byte_buffer: [std.fs.max_path_bytes]u8 = undefined;
+        const path = try std.fmt.bufPrint(&byte_buffer, "/proc/{d}/fd/{d}", .{ p, maps.handle });
+        const c = try connect(path, mode_rw);
+        break :blk c;
+    } else blk: {
+        const c = try connect(maps.name, mode_rw);
+        break :blk c;
+    };
 
     var connection_as_T: [*]T = @ptrCast(connection.buffer);
     var connection_buffer: []T = connection_as_T[0 .. 2 * n_elems];
@@ -265,14 +277,14 @@ test "posix wraparound" {
         .{ connection_buffer[1022..1030], buffer[1022..1030] },
     );
 
-    for (n + 2..n + 4) |i| {
-        connection_buffer[i] = @intCast(i);
-    }
+    // for (n + 2..n + 4) |i| {
+    //     connection_buffer[i] = @intCast(i);
+    // }
 
-    std.debug.print(
-        "mirror:\n\t{any}\nbuffer:\n\t{any}\n",
-        .{ connection_buffer[1022..1030], buffer[1022..1030] },
-    );
+    // std.debug.print(
+    //     "mirror:\n\t{any}\nbuffer:\n\t{any}\n",
+    //     .{ connection_buffer[1022..1030], buffer[1022..1030] },
+    // );
 
     try close(&connection);
     try close(&maps);

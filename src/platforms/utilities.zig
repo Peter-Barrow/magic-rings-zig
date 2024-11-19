@@ -7,7 +7,7 @@ pub const Maps = struct {
 
 pub const MagicRingBase = struct {
     name: []const u8,
-    path: ?[]const u8 = null,
+    pid: ?std.posix.pid_t = null,
     handle: std.fs.File.Handle,
     buffer: []align(std.mem.page_size) u8,
     mirror: []align(std.mem.page_size) u8,
@@ -56,20 +56,4 @@ test calculateNumberOfPages {
     requested_elems = 1500;
     minimum_number_of_pages = calculateNumberOfPages(T, requested_elems);
     try std.testing.expectEqual(2, minimum_number_of_pages);
-}
-
-pub fn ensureStartsWithSlash(name: []const u8) ![]const u8 {
-    var buffer: [std.fs.MAX_NAME_BYTES]u8 = undefined;
-    const slash: u8 = .{'/'}[0];
-    const first_char: u8 = name[0];
-    if (first_char == slash) {
-        return name;
-    }
-    return try std.fmt.bufPrint(&buffer, "/{s}", .{name});
-}
-
-pub fn makeTerminatedString(name: []const u8) ![*:0]const u8 {
-    var buffer: [std.fs.MAX_NAME_BYTES]u8 = undefined;
-    const name_z = try std.fmt.bufPrintZ(&buffer, "{s}", .{name});
-    return name_z;
 }

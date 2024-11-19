@@ -208,7 +208,8 @@ fn createFileDesciptor(name: [*:0]const u8, size: u32) !Handle {
 pub fn create(name: []const u8, size: u32) !utils.MagicRingBase {
 
     // Create a handle for a page backed section to hold the keep a reference to the buffer
-    const name_z = try utils.makeTerminatedString(name);
+    var buffer: [std.fs.MAX_NAME_BYTES]u8 = undefined;
+    const name_z = try std.fmt.bufPrintZ(&buffer, "{s}", .{name});
     const handle = try createFileDesciptor(name_z, size);
 
     const maps: utils.Maps = try magicRingFromHandle(handle, size, winMem.PAGE_READWRITE);
@@ -234,7 +235,8 @@ fn openFileDescriptor(name: [*:0]const u8, flags: winMem.FILE_MAP) !Handle {
 }
 
 pub fn connect(name: []const u8, access: utils.AccessMode) !utils.MagicRingBase {
-    const name_z = try utils.makeTerminatedString(name);
+    var buffer: [std.fs.MAX_NAME_BYTES]u8 = undefined;
+    const name_z = try std.fmt.bufPrintZ(&buffer, "{s}", .{name});
 
     const flags_handle: winMem.FILE_MAP = switch (access) {
         .ReadOnly => .{
