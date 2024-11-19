@@ -32,21 +32,17 @@ fn createFileMapping(
         return h;
     }
 
-    std.debug.print("createFileMapping\n", .{});
-    const err: winFoundation.WIN32_ERROR = winFoundation.GetLastError();
-    std.debug.print("{s}\n", .{@tagName(err)});
-
-    return error.createFileMapping;
+    switch (std.os.windows.kernel32.GetLastError()) {
+        else => |err| return std.os.windows.unexpectedError(err),
+    }
 }
 
-// zig fmt: off
 fn openFileMapping(
     desiredAccess: u32,
     inheritHandle: bool,
-    name: ?[*:0]const u8
+    name: ?[*:0]const u8,
 ) !Handle {
-// ) winFoundation.WIN32_ERROR!Handle {
-// zig fmt: on
+    // ) winFoundation.WIN32_ERROR!Handle {
 
     const inherit: winFoundation.BOOL = if (inheritHandle) winZig.TRUE else winZig.FALSE;
 
@@ -56,14 +52,11 @@ fn openFileMapping(
         return h;
     }
 
-    std.debug.print("openFileMapping", .{});
-    const err: winFoundation.WIN32_ERROR = winFoundation.GetLastError();
-    std.debug.print("{s}\n", .{@tagName(err)});
-
-    return error.openFileMapping;
+    switch (std.os.windows.kernel32.GetLastError()) {
+        else => |err| return std.os.windows.unexpectedError(err),
+    }
 }
 
-// zig fmt: off
 fn mapViewOfFile(
     handle: ?Handle,
     process: ?Handle,
@@ -73,12 +66,10 @@ fn mapViewOfFile(
     allocationType: winMem.VIRTUAL_ALLOCATION_TYPE,
     pageProtection: u32,
     extendedParamters: ?[*]winMem.MEM_EXTENDED_PARAMETER,
-    parameterCount: u32
+    parameterCount: u32,
 ) ![*]u8 {
-// ) winFoundation.WIN32_ERROR![*]u8 {
-    // zig fmt: on
+    // ) winFoundation.WIN32_ERROR![*]u8 {
 
-    // zig fmt: off
     const view = winMem.MapViewOfFile3(
         handle,
         process,
@@ -88,21 +79,18 @@ fn mapViewOfFile(
         allocationType,
         pageProtection,
         extendedParamters,
-        parameterCount);
-    // zig fmt: on
+        parameterCount,
+    );
 
     if (view) |v| {
         return @ptrCast(v);
     }
 
-    std.debug.print("MapViewOfFile3\n", .{});
-    const err: winFoundation.WIN32_ERROR = winFoundation.GetLastError();
-    std.debug.print("{s}\n", .{@tagName(err)});
-
-    return error.mapViewOfFile;
+    switch (std.os.windows.kernel32.GetLastError()) {
+        else => |err| return std.os.windows.unexpectedError(err),
+    }
 }
 
-// zig fmt: off
 fn virtualAlloc(
     process: ?Handle,
     baseAddress: ?*anyopaque,
@@ -110,12 +98,10 @@ fn virtualAlloc(
     allocationType: winMem.VIRTUAL_ALLOCATION_TYPE,
     pageProtection: u32,
     extendedParamters: ?[*]winMem.MEM_EXTENDED_PARAMETER,
-    parameterCount: u32
+    parameterCount: u32,
 ) ![*]u8 {
-// ) winFoundation.WIN32_ERROR![*]u8 {
-    // zig fmt: off
+    // ) winFoundation.WIN32_ERROR![*]u8 {
 
-    // zig fmt: off
     const ptr = winMem.VirtualAlloc2(
         process,
         baseAddress,
@@ -123,114 +109,34 @@ fn virtualAlloc(
         allocationType,
         pageProtection,
         extendedParamters,
-        parameterCount);
-    // zig fmt: on
+        parameterCount,
+    );
 
     if (ptr) |p| {
         return @ptrCast(p);
     }
 
-    std.debug.print("virtualAlloc\n", .{});
-    const err: winFoundation.WIN32_ERROR = winFoundation.GetLastError();
-    std.debug.print("{s}\n", .{@tagName(err)});
-
-    return error.virtualAlloc;
+    switch (std.os.windows.kernel32.GetLastError()) {
+        else => |err| return std.os.windows.unexpectedError(err),
+    }
 }
 
 fn virtualFree(
     address: ?[*]u8,
     size: usize,
     freeType: winMem.VIRTUAL_FREE_TYPE,
-) !void {
-    // ) winFoundation.WIN32_ERROR!void {
+) void {
     var result: winFoundation.BOOL = winZig.FALSE;
     result = winMem.VirtualFree(@ptrCast(address), size, freeType);
 
-    if (result == winZig.TRUE) {
-        return;
-    }
-
-    std.debug.print("virtualFree\n", .{});
-    const err: winFoundation.WIN32_ERROR = winFoundation.GetLastError();
-    std.debug.print("{s}\n", .{@tagName(err)});
-
-    return error.virtualFree;
+    std.debug.assert(result == winZig.TRUE);
 }
 
-// fn createOrConnectToMapping(handle: Handle, size: usize, mode: utils.BufferMode) !utils.Maps {
-//     var sys_info: winSysInfo.SYSTEM_INFO = undefined;
-//     winSysInfo.GetSystemInfo(&sys_info);
-//
-//     const flags_protection: winMem.PAGE_PROTECTION_FLAGS = switch (mode) {
-//         .Owner => winMem.PAGE_READWRITE,
-//         .Client => winMem.PAGE_READONLY,
-//     };
-//
-//     if (@mod(size, sys_info.dwAllocationGranularity) != 0) {
-//         return error.AllocationGranularity;
-//     }
-//
-//     // Reserve a region of memory twice the size of the buffer we want
-//     // zig fmt: off
-//     var reserved_memory: [*]u8 = try virtualAlloc(
-//         null,
-//         null,
-//         size * 2,
-//         .{
-//             .RESERVE = 1,
-//             .RESERVE_PLACEHOLDER = 1
-//         },
-//         @bitCast(winMem.PAGE_NOACCESS),
-//         null, 0);
-//     // zig fmt: on
-//
-//     // Split reserved_memory into buffer and mirror
-//     // try virtualFree(reserved_memory, size, winMem.MEM_RELEASE | winMem.MEM_PRESERVE_PLACEHOLDER);
-//     try virtualFree(reserved_memory, 0, winMem.MEM_RELEASE);
-//
-//     // Take the reserved memory and map the handle into the first half
-//     const proc = std.os.windows.kernel32.GetCurrentProcess();
-//     // zig fmt: off
-//     const map: [*]u8 = try mapViewOfFile(
-//         handle,
-//         proc,
-//         reserved_memory,
-//         0,
-//         size,
-//         .{
-//             //.REPLACE_PLACEHOLDER = 1,
-//         },
-//         @bitCast(flags_protection),
-//         null,
-//         0);
-//     // zig fmt: on
-//     std.debug.print("mapped\n", .{});
-//
-//     // Take a pointer to the end of the reserved_memory and map it again, this time into the
-//     // second half
-//     // zig fmt: off
-//     const mirror: [*]u8 = try mapViewOfFile(
-//         handle,
-//         proc,
-//         @alignCast(@ptrCast(&reserved_memory[size])),
-//         0,
-//         size,
-//         .{
-//             //.REPLACE_PLACEHOLDER = 1,
-//         },
-//         @bitCast(flags_protection),
-//         null,
-//         0);
-//     // zig fmt: on
-//     std.debug.print("mirrored\n", .{});
-//
-//     return .{
-//         .buffer = @alignCast(@ptrCast(map[0..size])),
-//         .mirror = @alignCast(@ptrCast(mirror[0..size])),
-//     };
-// }
-
-fn mapRing(handle: Handle, size: usize, protection: winMem.PAGE_PROTECTION_FLAGS) !utils.Maps {
+fn magicRingFromHandle(
+    handle: Handle,
+    size: usize,
+    protection: winMem.PAGE_PROTECTION_FLAGS,
+) !utils.Maps {
     var sys_info: winSysInfo.SYSTEM_INFO = undefined;
     winSysInfo.GetSystemInfo(&sys_info);
 
@@ -240,15 +146,44 @@ fn mapRing(handle: Handle, size: usize, protection: winMem.PAGE_PROTECTION_FLAGS
     const proc = std.os.windows.kernel32.GetCurrentProcess();
 
     // in the connect case this needs to be a call to mapViewOfFile probably with size*2
-    const reserved_memory: [*]u8 = try virtualAlloc(proc, null, size * 2, .{ .RESERVE = 1, .RESERVE_PLACEHOLDER = 1 }, @bitCast(winMem.PAGE_NOACCESS), null, 0);
+    const reserved_memory: [*]u8 = try virtualAlloc(
+        proc,
+        null,
+        size * 2,
+        .{
+            .RESERVE = 1,
+            .RESERVE_PLACEHOLDER = 1,
+        },
+        @bitCast(winMem.PAGE_NOACCESS),
+        null,
+        0,
+    );
 
-    try virtualFree(reserved_memory, 0, winMem.MEM_RELEASE);
+    virtualFree(reserved_memory, 0, winMem.MEM_RELEASE);
 
-    const map: [*]u8 = try mapViewOfFile(handle, proc, reserved_memory, 0, size, .{}, @bitCast(protection), null, 0);
-    std.debug.print("map made\n", .{});
+    const map: [*]u8 = try mapViewOfFile(
+        handle,
+        proc,
+        reserved_memory,
+        0,
+        size,
+        .{},
+        @bitCast(protection),
+        null,
+        0,
+    );
 
-    const mirror: [*]u8 = try mapViewOfFile(handle, proc, @alignCast(@ptrCast(&reserved_memory[size])), 0, size, .{}, @bitCast(protection), null, 0);
-    std.debug.print("mirrored\n", .{});
+    const mirror: [*]u8 = try mapViewOfFile(
+        handle,
+        proc,
+        @alignCast(@ptrCast(&reserved_memory[size])),
+        0,
+        size,
+        .{},
+        @bitCast(protection),
+        null,
+        0,
+    );
 
     return .{
         .buffer = @alignCast(@ptrCast(map[0..size])),
@@ -257,30 +192,17 @@ fn mapRing(handle: Handle, size: usize, protection: winMem.PAGE_PROTECTION_FLAGS
 }
 
 fn createFileDesciptor(name: [*:0]const u8, size: u32) !Handle {
-    // zig fmt: off
     const handle: std.os.windows.HANDLE = try createFileMapping(
         winFoundation.INVALID_HANDLE_VALUE,
         null,
         .{
-            .PAGE_READWRITE = 1
+            .PAGE_READWRITE = 1,
         },
         0,
         size,
-        name);
-    // zig fmt: on
+        name,
+    );
     return handle;
-}
-
-fn openFileDescriptor(name: [*:0]const u8) !Handle {
-    // fn openFileDescriptor(name: []const u8) winFoundation.WIN32_ERROR!Handle {
-    //  var handle: Handle = undefined;
-    if (winMem.OpenFileMappingA(@bitCast(winMem.FILE_MAP_WRITE), winZig.FALSE, name)) |h| {
-        return h;
-    }
-    const err: winFoundation.WIN32_ERROR = winFoundation.GetLastError();
-    std.debug.print("{s}\n", .{@tagName(err)});
-
-    return error.virtualFree;
 }
 
 pub fn create(name: []const u8, size: u32) !utils.MagicRingBase {
@@ -289,9 +211,7 @@ pub fn create(name: []const u8, size: u32) !utils.MagicRingBase {
     const name_z = try utils.makeTerminatedString(name);
     const handle = try createFileDesciptor(name_z, size);
 
-    // in the connect case this needs to be a call to mapViewOfFile probably with size*2
-    // const reserved_memory: [*]u8 = try virtualAlloc(null, null, size * 2, .{ .RESERVE = 1, .RESERVE_PLACEHOLDER = 1 }, @bitCast(winMem.PAGE_NOACCESS), null, 0);
-    const maps: utils.Maps = try mapRing(handle, size, winMem.PAGE_READWRITE);
+    const maps: utils.Maps = try magicRingFromHandle(handle, size, winMem.PAGE_READWRITE);
 
     return .{
         .name = name,
@@ -299,6 +219,18 @@ pub fn create(name: []const u8, size: u32) !utils.MagicRingBase {
         .buffer = maps.buffer,
         .mirror = maps.mirror,
     };
+}
+
+fn openFileDescriptor(name: [*:0]const u8) !Handle {
+    // fn openFileDescriptor(name: []const u8) winFoundation.WIN32_ERROR!Handle {
+    //  var handle: Handle = undefined;
+    if (winMem.OpenFileMappingA(@bitCast(winMem.FILE_MAP_READ), winZig.FALSE, name)) |h| {
+        return h;
+    }
+
+    switch (std.os.windows.kernel32.GetLastError()) {
+        else => |err| return std.os.windows.unexpectedError(err),
+    }
 }
 
 pub fn connect(name: []const u8) !utils.MagicRingBase {
@@ -306,18 +238,8 @@ pub fn connect(name: []const u8) !utils.MagicRingBase {
     const handle = try openFileDescriptor(name_z);
 
     var size: i64 = 0;
-    const res: std.os.windows.BOOL = std.os.windows.kernel32.GetFileSizeEx(handle, @ptrCast(&size));
-    _ = res;
-    // if (res == std.os.kernel32.FALSE) {
-    //     return error.FileSizeUnknown;
-    // }
-
-    //const reserved: [*]u8 = try mapViewOfFile(handle, null, null, 0, @intCast(size * 2), .{}, @bitCast(winMem.PAGE_READWRITE), null, 0);
-    // var reserved: [*]u8 = undefined;
-    // if (winMem.MapViewOfFile(handle, winMem.FILE_MAP_WRITE, 0, 0, 0)) |ptr| {
-    //     reserved = @ptrCast(ptr);
-    // }
-    const maps: utils.Maps = try mapRing(handle, @intCast(size), winMem.PAGE_READWRITE);
+    _ = std.os.windows.kernel32.GetFileSizeEx(handle, @ptrCast(&size));
+    const maps: utils.Maps = try magicRingFromHandle(handle, @intCast(size), winMem.PAGE_READONLY);
 
     return .{
         .name = name,
@@ -327,15 +249,17 @@ pub fn connect(name: []const u8) !utils.MagicRingBase {
     };
 }
 
-pub fn destroy(map: *utils.MagicRingBase) void {
+pub fn close(map: *utils.MagicRingBase) !void {
     if (winMem.UnmapViewOfFile(@ptrCast(map.mirror)) == winZig.FALSE) {
-        //return winFoundation.GetLastError();
-        return;
+        switch (std.os.windows.kernel32.GetLastError()) {
+            else => |err| return std.os.windows.unexpectedError(err),
+        }
     }
 
     if (winMem.UnmapViewOfFile(@ptrCast(map.buffer)) == winZig.FALSE) {
-        //return winFoundation.GetLastError();
-        return;
+        switch (std.os.windows.kernel32.GetLastError()) {
+            else => |err| return std.os.windows.unexpectedError(err),
+        }
     }
 
     winZig.closeHandle(map.handle);
@@ -353,9 +277,8 @@ test "windows wraparound" {
 
     const n_elems: u32 = @intCast(std.mem.page_size * n_pages);
 
-    const name: []const u8 = "testbuffer";
+    const name: []const u8 = "testbuffer1";
     var maps: utils.MagicRingBase = try create(name, n_elems);
-    defer destroy(&maps);
 
     var map_as_T: [*]T = @ptrCast(maps.buffer);
     var buffer: []T = map_as_T[0 .. 2 * n_elems];
@@ -377,11 +300,19 @@ test "windows wraparound" {
 
     std.debug.print("\t{any}\n", .{buffer[n - 4 .. n]});
     // ensure end of buffer is sequential
-    try std.testing.expectEqualSlices(T, &[4]T{ n - 4, n - 3, n - 2, n - 1 }, buffer[n - 4 .. n]);
+    try std.testing.expectEqualSlices(
+        T,
+        &[4]T{ n - 4, n - 3, n - 2, n - 1 },
+        buffer[n - 4 .. n],
+    );
 
     std.debug.print("\t{any}\n", .{buffer[n - 4 .. n + 4]});
     // test magic, can we wraparound?
-    try std.testing.expectEqualSlices(T, &[8]T{ n - 4, n - 3, n - 2, n - 1, 0, 1, 2, 3 }, buffer[n - 4 .. n + 4]);
+    try std.testing.expectEqualSlices(
+        T,
+        &[8]T{ n - 4, n - 3, n - 2, n - 1, 0, 1, 2, 3 },
+        buffer[n - 4 .. n + 4],
+    );
 
     for (n..n + 4) |i| {
         buffer[i] = @intCast(i);
@@ -389,17 +320,34 @@ test "windows wraparound" {
 
     // ensure we can write past the end of the ring buffer and wraparound
     std.debug.print("\t{any}\n", .{buffer[n - 4 .. n + 4]});
-    try std.testing.expectEqualSlices(T, &[8]T{ n - 4, n - 3, n - 2, n - 1, n, n + 1, n + 2, n + 3 }, buffer[n - 4 .. n + 4]);
+    try std.testing.expectEqualSlices(
+        T,
+        &[8]T{ n - 4, n - 3, n - 2, n - 1, n, n + 1, n + 2, n + 3 },
+        buffer[n - 4 .. n + 4],
+    );
     std.debug.print("\t{any}\n", .{buffer[n - 2 .. n + 6]});
-    try std.testing.expectEqualSlices(T, &[8]T{ n - 2, n - 1, n, n + 1, n + 2, n + 3, 4, 5 }, buffer[n - 2 .. n + 6]);
+    try std.testing.expectEqualSlices(
+        T,
+        &[8]T{ n - 2, n - 1, n, n + 1, n + 2, n + 3, 4, 5 },
+        buffer[n - 2 .. n + 6],
+    );
 
     var connection = try connect(name);
-    defer destroy(&connection);
     var connection_as_T: [*]T = @ptrCast(connection.buffer);
     var connection_buffer: []T = connection_as_T[0 .. 2 * n_elems];
 
     // assuming that we can connect to the buffer and it has the same representation then we can compare the original and the connection
-    try std.testing.expectEqualSlices(T, connection_buffer[n - 2 .. n + 6], buffer[n - 2 .. n + 6]);
+    try std.testing.expectEqualSlices(
+        T,
+        connection_buffer[n - 2 .. n + 6],
+        buffer[n - 2 .. n + 6],
+    );
 
-    std.debug.print("mirror:\n\t{any}\nbuffer:\n\t{any}\n", .{ connection_buffer[n - 2 .. n + 6], buffer[n - 2 .. n + 6] });
+    std.debug.print(
+        "mirror:\n\t{any}\nbuffer:\n\t{any}\n",
+        .{ connection_buffer[n - 2 .. n + 6], buffer[n - 2 .. n + 6] },
+    );
+
+    try close(&connection);
+    try close(&maps);
 }

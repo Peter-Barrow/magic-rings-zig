@@ -134,7 +134,6 @@ pub fn connect(name: []const u8) ConnectError!utils.MagicRingBase {
 
     return .{
         .name = name,
-        .path = name,
         .handle = fd,
         .buffer = maps.buffer,
         .mirror = maps.mirror,
@@ -236,7 +235,8 @@ test "posix wraparound" {
         buffer[1022..1030],
     );
 
-    var connection = try connect(maps.path);
+    var connection = try if (maps.path) |p| connect(p) else connect(maps.name);
+
     var connection_as_T: [*]T = @ptrCast(connection.buffer);
     var connection_buffer: []T = connection_as_T[0 .. 2 * n_elems];
 

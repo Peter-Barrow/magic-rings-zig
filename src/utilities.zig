@@ -7,7 +7,7 @@ pub const Maps = struct {
 
 pub const MagicRingBase = struct {
     name: []const u8,
-    path: []const u8,
+    path: ?[]const u8 = null,
     handle: std.fs.File.Handle,
     buffer: []align(std.mem.page_size) u8,
     mirror: []align(std.mem.page_size) u8,
