@@ -9,27 +9,24 @@ const winSec = @import("zigwin32").security;
 
 const Handle = std.os.windows.HANDLE;
 
-// zig fmt: off
 fn createFileMapping(
     handle: ?Handle,
     fileMappingAttributes: ?*winSec.SECURITY_ATTRIBUTES,
     protectionFlags: winMem.PAGE_PROTECTION_FLAGS,
     sizeHigh: u32,
     sizeLow: u32,
-    name: ?[*:0]const u8
+    name: ?[*:0]const u8,
 ) !Handle {
-// ) winFoundation.WIN32_ERROR!Handle {
-    // zig fmt: on
+    // ) winFoundation.WIN32_ERROR!Handle {
 
-    // zig fmt: off
     const handle_new: ?Handle = winMem.CreateFileMappingA(
         handle,
         fileMappingAttributes,
         protectionFlags,
         sizeHigh,
         sizeLow,
-        name);
-    // zig fmt: on
+        name,
+    );
 
     if (handle_new) |h| {
         return h;
@@ -286,16 +283,10 @@ fn openFileDescriptor(name: [*:0]const u8) !Handle {
     return error.virtualFree;
 }
 
-fn formatName(name: []const u8) ![*:0]const u8 {
-    var buffer: [std.fs.MAX_NAME_BYTES]u8 = undefined;
-    const name_z = try std.fmt.bufPrintZ(&buffer, "{s}", .{name});
-    return name_z;
-}
-
 pub fn create(name: []const u8, size: u32) !utils.MagicRingBase {
 
     // Create a handle for a page backed section to hold the keep a reference to the buffer
-    const name_z = try formatName(name);
+    const name_z = try utils.makeTerminatedString(name);
     const handle = try createFileDesciptor(name_z, size);
 
     // in the connect case this needs to be a call to mapViewOfFile probably with size*2
@@ -311,7 +302,7 @@ pub fn create(name: []const u8, size: u32) !utils.MagicRingBase {
 }
 
 pub fn connect(name: []const u8) !utils.MagicRingBase {
-    const name_z = try formatName(name);
+    const name_z = try utils.makeTerminatedString(name);
     const handle = try openFileDescriptor(name_z);
 
     var size: i64 = 0;
