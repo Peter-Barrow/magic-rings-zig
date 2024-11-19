@@ -21,7 +21,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
-        // .link_libc = true,
+        .link_libc = true,
     });
 
     // If building on windows then add zigwin32
@@ -64,8 +64,18 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = false,
     });
 
+    const use_shm_funcs = b.option(
+        bool,
+        "use_shm_funcs",
+        "Use shm_open and shm_unlink instead of memfd_create",
+    ) orelse false;
+
+    const options = b.addOptions();
+    options.addOption(bool, "use_shm_funcs", use_shm_funcs);
+    lib_unit_tests.root_module.addOptions("config", options);
     lib_unit_tests.root_module.addImport("zigwin32", zigwin32.module("zigwin32"));
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
