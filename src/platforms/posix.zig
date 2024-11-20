@@ -9,6 +9,12 @@ const use_shm_funcs = switch (tag) {
     else => true, // all other platforms that support shm_open and shm_unlink
 };
 
+const OFlags = switch (tag) {
+    .linux, .freebsd => if (@hasDecl(config, "use_shm_funcs")) std.c.O else std.posix.O,
+    .windows => @compileError("O_Flags not available for Windows"),
+    else => std.c.O,
+};
+
 pub const MagicRingPosixError = std.posix.MMapError || utils.MagicRingError;
 
 fn magicRingFromFD(file_descriptor: std.posix.fd_t, size: usize, protection: u32) std.posix.MMapError!utils.Maps {
@@ -58,7 +64,7 @@ pub fn create(name: []const u8, size: u32) CreateError!utils.MagicRingBase {
         };
         const new_fd = std.c.shm_open(name_z, @bitCast(flags), 0o666);
 
-        const err: std.posix.E = @enumFromInt(std.c._errno().*);
+        const err: std.posix.E = @enumFromInt(new_fd);
         switch (err) {
             .SUCCESS => break :blk new_fd,
             .ACCES => return error.AccessDenied,
@@ -100,7 +106,7 @@ pub fn create(name: []const u8, size: u32) CreateError!utils.MagicRingBase {
 pub const ConnectError = std.posix.FStatError || std.fs.File.OpenError || std.posix.MMapError;
 
 pub fn connect(name: []const u8, access: utils.AccessMode) ConnectError!utils.MagicRingBase {
-    const flags: std.c.O = switch (access) {
+    const flags: OFlags = switch (access) {
         .ReadOnly => .{
             .ACCMODE = .RDONLY,
         },
@@ -117,13 +123,12 @@ pub fn connect(name: []const u8, access: utils.AccessMode) ConnectError!utils.Ma
     const handle: std.fs.File = if (use_shm_funcs) blk: {
         var buffer: [std.fs.MAX_NAME_BYTES]u8 = undefined;
         const name_z = try std.fmt.bufPrintZ(&buffer, "{s}", .{name});
-        std.debug.print("{s}\n", .{name_z});
         const new_handle = std.c.shm_open(name_z, @bitCast(flags), permissions);
         const new_file: std.fs.File = .{
             .handle = new_handle,
         };
 
-        const err: std.posix.E = @enumFromInt(std.c._errno().*);
+        const err: std.posix.E = @enumFromInt(new_handle);
         switch (err) {
             .SUCCESS => break :blk new_file,
             .ACCES => return error.AccessDenied,
@@ -158,6 +163,28 @@ pub fn connect(name: []const u8, access: utils.AccessMode) ConnectError!utils.Ma
     };
 }
 
+pub fn exists(name: []const u8) !void {
+    const flags: OFlags = .{
+        .ACCMODE = .RDONLY,
+    };
+
+    if (use_shm_funcs) {
+        var buffer: [std.fs.MAX_NAME_BYTES]u8 = undefined;
+        const name_z = try std.fmt.bufPrintZ(&buffer, "{s}", .{name});
+        const rc = std.c.shm_open(name_z, @bitCast(flags), 0o444);
+        const err: std.posix.E = @enumFromInt(rc);
+
+        switch (err) {
+            .SUCCESS => return,
+            else => return error.NoMapFound,
+        }
+    } else {
+        const handle = std.fs.openFileAbsolute(name, .{}) catch return error.NoMapFound;
+        handle.close();
+    }
+    return;
+}
+
 pub fn close(map: *utils.MagicRingBase) std.posix.UnlinkError!void {
     std.posix.munmap(map.buffer);
     map.buffer = undefined;
@@ -168,8 +195,8 @@ pub fn close(map: *utils.MagicRingBase) std.posix.UnlinkError!void {
     if (use_shm_funcs) {
         var buffer: [std.fs.MAX_NAME_BYTES]u8 = undefined;
         const name_z = std.fmt.bufPrintZ(&buffer, "{s}", .{map.name}) catch unreachable;
-        _ = std.c.shm_unlink(name_z);
-        const err: std.posix.E = @enumFromInt(std.c._errno().*);
+        const rc = std.c.shm_unlink(name_z);
+        const err: std.posix.E = @enumFromInt(rc);
         switch (err) {
             .SUCCESS => return,
             .ACCES => return error.AccessDenied,
@@ -251,10 +278,13 @@ test "posix wraparound" {
         buffer[1022..1030],
     );
 
+    try std.testing.expectError(error.NoMapFound, exists("/testbuffer"));
+
     const mode_rw: utils.AccessMode = .ReadOnly;
     var connection = if (maps.pid) |p| blk: {
         var byte_buffer: [std.fs.max_path_bytes]u8 = undefined;
         const path = try std.fmt.bufPrint(&byte_buffer, "/proc/{d}/fd/{d}", .{ p, maps.handle });
+        try exists(path);
         const c = try connect(path, mode_rw);
         break :blk c;
     } else blk: {

@@ -1,3 +1,5 @@
+const std = @import("std");
+
 const magic_ring = switch (@import("builtin").target.os.tag) {
     .linux, .freebsd => @import("platforms/posix.zig"),
     .windows => @import("platforms/windows.zig"),
@@ -9,6 +11,7 @@ const Mode = @import("platforms/utilities.zig").AccessMode;
 
 pub fn MagicRing(comptime T: type) type {
     return struct {
+        const Self = @This();
         const elem_size: u32 = @intCast(@sizeOf(T));
 
         magic: Map,
@@ -16,7 +19,7 @@ pub fn MagicRing(comptime T: type) type {
         capacity: usize,
         count: usize,
 
-        pub fn new(num_elems: u32, name: []const u8) !@This() {
+        pub fn new(num_elems: u32, name: []const u8) !Self {
             const size_in_bytes: u32 = num_elems * elem_size;
             const magic = try magic_ring.create(name, size_in_bytes);
             var data_as_manyT: [*]T = @ptrCast(magic.buffer);
@@ -29,22 +32,24 @@ pub fn MagicRing(comptime T: type) type {
             };
         }
 
-        pub fn destroy(self: *@This()) !void {
+        pub fn destroy(self: *Self) !void {
             try magic_ring.close(&self.magic);
         }
 
-        // pub fn connect(name: []const u8, mode: Mode) !@This() {
-        //     const magic = try magic_ring.connect(name, mode);
-        //     var data_as_manyT: [*]T = @ptrCast(magic.buffer);
-        //     return .{
-        //         .magic = magic,
-        //         .data = data_as_manyT[0 .. 2 * num_elems],
-        //         .capacity = num_elems,
-        //         .count = 0,
-        //     };
-        // }
+        pub fn connect(name: []const u8, mode: Mode) !Self {
+            const magic = try magic_ring.connect(name, mode);
+            var data_as_manyT: [*]T = @ptrCast(magic.buffer);
+            const num_elems = @divExact(magic.buffer.len, elem_size);
 
-        pub fn slice(self: *@This(), start: usize, stop: usize) ![]T {
+            return .{
+                .magic = magic,
+                .data = data_as_manyT[0 .. 2 * num_elems],
+                .capacity = num_elems,
+                .count = 0,
+            };
+        }
+
+        pub fn slice(self: *Self, start: usize, stop: usize) ![]T {
             if (start > stop) {
                 return error.StartAfterStop;
             }
@@ -56,7 +61,7 @@ pub fn MagicRing(comptime T: type) type {
             return self.data[absolute_start..absolute_stop];
         }
 
-        pub fn slice_const(self: *@This(), start: usize, stop: usize) ![]const T {
+        pub fn slice_const(self: *Self, start: usize, stop: usize) ![]const T {
             if (start > stop) {
                 return error.StartAfterStop;
             }
@@ -68,7 +73,7 @@ pub fn MagicRing(comptime T: type) type {
             return @ptrCast(self.data[absolute_start..absolute_stop]);
         }
 
-        pub fn push(self: *@This(), data: []T) !usize {
+        pub fn push(self: *Self, data: []T) !usize {
             if (data.len > self.capacity) {
                 return error.LargerThanBuffer;
             }
@@ -79,7 +84,7 @@ pub fn MagicRing(comptime T: type) type {
             return data.len;
         }
 
-        pub fn zero(self: *@This()) void {
+        pub fn zero(self: *Self) void {
             for (0..self.capacity) |i| {
                 self.data[i] = undefined;
             }

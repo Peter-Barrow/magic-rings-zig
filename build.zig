@@ -25,10 +25,11 @@ pub fn build(b: *std.Build) void {
     });
 
     // If building on windows then add zigwin32
-    const zigwin32 = b.dependency("zigwin32", .{});
-    exe.root_module.addImport("zigwin32", zigwin32.module("zigwin32"));
-    // const zigwin32 = b.dependency("zigwin32", .{});
-    // exe.root_module.addImport("zigwin32", zigwin32.module("zigwin32"));
+    const zigwin32 = b.dependency("zigwin32", .{}).module("zigwin32");
+    exe.root_module.addImport("zigwin32", zigwin32);
+
+    const known_folders = b.dependency("known-folders", .{}).module("known-folders");
+    exe.root_module.addImport("known-folders", known_folders);
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -76,7 +77,8 @@ pub fn build(b: *std.Build) void {
     const options = b.addOptions();
     options.addOption(bool, "use_shm_funcs", use_shm_funcs);
     lib_unit_tests.root_module.addOptions("config", options);
-    lib_unit_tests.root_module.addImport("zigwin32", zigwin32.module("zigwin32"));
+    lib_unit_tests.root_module.addImport("zigwin32", zigwin32);
+    lib_unit_tests.root_module.addImport("known-folders", known_folders);
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 

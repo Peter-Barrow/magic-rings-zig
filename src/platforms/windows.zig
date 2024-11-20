@@ -267,6 +267,18 @@ pub fn connect(name: []const u8, access: utils.AccessMode) !utils.MagicRingBase 
     };
 }
 
+pub fn exists(name: []const u8) !void {
+    var buffer: [std.fs.MAX_NAME_BYTES]u8 = undefined;
+    const name_z = std.fmt.bufPrintZ(&buffer, "{s}", .{name}) catch unreachable;
+
+    const flags_handle: winMem.FILE_MAP = .{ .READ = 1 };
+
+    const handle = openFileDescriptor(name_z, flags_handle) catch return error.NoMapFound;
+
+    winZig.closeHandle(handle);
+    return;
+}
+
 pub fn close(map: *utils.MagicRingBase) !void {
     if (winMem.UnmapViewOfFile(@ptrCast(map.mirror)) == winZig.FALSE) {
         switch (std.os.windows.kernel32.GetLastError()) {
@@ -350,6 +362,9 @@ test "windows wraparound" {
         buffer[n - 2 .. n + 6],
     );
 
+    try std.testing.expectError(error.NoMapFound, exists("does-not-exist"));
+
+    try exists(name);
     var connection = try connect(name, .ReadWrite);
     var connection_as_T: [*]T = @ptrCast(connection.buffer);
     var connection_buffer: []T = connection_as_T[0 .. 2 * n_elems];
