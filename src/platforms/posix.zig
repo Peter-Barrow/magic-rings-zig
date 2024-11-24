@@ -17,7 +17,11 @@ const OFlags = switch (tag) {
 
 pub const MagicRingPosixError = std.posix.MMapError || utils.MagicRingError;
 
-fn magicRingFromFD(file_descriptor: std.posix.fd_t, size: usize, protection: u32) std.posix.MMapError!utils.Maps {
+fn magicRingFromFD(
+    file_descriptor: std.posix.fd_t,
+    size: usize,
+    protection: u32,
+) std.posix.MMapError!utils.Maps {
     var map = try std.posix.mmap(
         null,
         size * 2,
@@ -63,8 +67,11 @@ pub fn create(name: []const u8, size: u32) CreateError!utils.MagicRingBase {
             .EXCL = true,
         };
         const new_fd = std.c.shm_open(name_z, @bitCast(flags), 0o666);
+        if (new_fd >= 0) {
+            break :blk new_fd;
+        }
 
-        const err: std.posix.E = @enumFromInt(new_fd);
+        const err: std.posix.E = @enumFromInt(@as(i32, std.c._errno().*));
         switch (err) {
             .SUCCESS => break :blk new_fd,
             .ACCES => return error.AccessDenied,
@@ -128,7 +135,12 @@ pub fn connect(name: []const u8, access: utils.AccessMode) ConnectError!utils.Ma
             .handle = new_handle,
         };
 
-        const err: std.posix.E = @enumFromInt(new_handle);
+        if (new_handle >= 0) {
+            break :blk new_file;
+        }
+
+        const err_no: u32 = @bitCast(std.c._errno().*);
+        const err: std.posix.E = @enumFromInt(err_no);
         switch (err) {
             .SUCCESS => break :blk new_file,
             .ACCES => return error.AccessDenied,
@@ -163,26 +175,25 @@ pub fn connect(name: []const u8, access: utils.AccessMode) ConnectError!utils.Ma
     };
 }
 
-pub fn exists(name: []const u8) !void {
+pub fn exists(name: []const u8) bool {
     const flags: OFlags = .{
         .ACCMODE = .RDONLY,
     };
 
     if (use_shm_funcs) {
         var buffer: [std.fs.MAX_NAME_BYTES]u8 = undefined;
-        const name_z = try std.fmt.bufPrintZ(&buffer, "{s}", .{name});
+        const name_z = std.fmt.bufPrintZ(&buffer, "{s}", .{name}) catch unreachable;
         const rc = std.c.shm_open(name_z, @bitCast(flags), 0o444);
-        const err: std.posix.E = @enumFromInt(rc);
 
-        switch (err) {
-            .SUCCESS => return,
-            else => return error.NoMapFound,
+        if (rc >= 0) {
+            return true;
         }
+        return false;
     } else {
-        const handle = std.fs.openFileAbsolute(name, .{}) catch return error.NoMapFound;
+        const handle = std.fs.openFileAbsolute(name, .{}) catch return false;
         handle.close();
+        return true;
     }
-    return;
 }
 
 pub fn close(map: *utils.MagicRingBase) std.posix.UnlinkError!void {
@@ -196,7 +207,12 @@ pub fn close(map: *utils.MagicRingBase) std.posix.UnlinkError!void {
         var buffer: [std.fs.MAX_NAME_BYTES]u8 = undefined;
         const name_z = std.fmt.bufPrintZ(&buffer, "{s}", .{map.name}) catch unreachable;
         const rc = std.c.shm_unlink(name_z);
-        const err: std.posix.E = @enumFromInt(rc);
+        if (rc >= 0) {
+            return;
+        }
+        // const err_no: u32 = @bitCast(rc);
+        const err_no = std.c._errno().*;
+        const err: std.posix.E = @enumFromInt(err_no);
         switch (err) {
             .SUCCESS => return,
             .ACCES => return error.AccessDenied,
@@ -222,8 +238,14 @@ test "posix wraparound" {
 
     const n_elems: u32 = @intCast(std.mem.page_size * n_pages);
 
-    const buffer_name = "testbuffer";
+    const buffer_name = "/testbuffer";
+
+    // if (exists(buffer_name)) {
+    //     _ = std.c.shm_unlink(buffer_name);
+    // }
+
     var maps: utils.MagicRingBase = try create(buffer_name, n_elems);
+    // var maps: utils.MagicRingBase = try connect(buffer_name, .ReadOnly);
 
     var map_as_T: [*]T = @ptrCast(maps.buffer);
     var buffer: []T = map_as_T[0 .. 2 * n_elems];
@@ -278,16 +300,15 @@ test "posix wraparound" {
         buffer[1022..1030],
     );
 
-    try std.testing.expectError(error.NoMapFound, exists("/testbuffer"));
-
     const mode_rw: utils.AccessMode = .ReadOnly;
     var connection = if (maps.pid) |p| blk: {
         var byte_buffer: [std.fs.max_path_bytes]u8 = undefined;
         const path = try std.fmt.bufPrint(&byte_buffer, "/proc/{d}/fd/{d}", .{ p, maps.handle });
-        try exists(path);
+        try std.testing.expectEqual(true, exists(path));
         const c = try connect(path, mode_rw);
         break :blk c;
     } else blk: {
+        try std.testing.expectEqual(true, exists(maps.name));
         const c = try connect(maps.name, mode_rw);
         break :blk c;
     };
