@@ -1,7 +1,23 @@
 const std = @import("std");
-const windows = std.os.windows;
 
-const pz = @import("posix.zig");
+const tag = @import("builtin").target.os.tag;
+
+const windows = if (tag == .windows) std.os.windows;
+const winZig = if (tag == .windows) @import("zigwin32").zig;
+const winFoundation = if (tag == .windows) @import("zigwin32").foundation;
+
+const winSysInfo = if (tag == .windows) @import("zigwin32").system.system_information;
+const winMem = if (tag == .windows) @import("zigwin32").system.memory;
+const winSec = if (tag == .windows) @import("zigwin32").security;
+
+const pid_t = switch (tag) {
+    .windows => u32,
+    else => i32,
+};
+
+const assert = std.debug.assert;
+
+// const pz = @import("posix.zig");
 
 const config = @import("config");
 const use_shm_funcs = switch (tag) {
@@ -10,7 +26,7 @@ const use_shm_funcs = switch (tag) {
     else => true, // all other platforms that support shm_open and shm_unlink
 };
 
-const tag = @import("builtin").target.os.tag;
+// TODO: using memfd across processes relies on knowing the pid of the process that made the fd, so we would need to cache this somewhere otherwise it only works via fork...
 
 pub fn SharedMemory(comptime T: type) type {
     return struct {
@@ -21,20 +37,20 @@ pub fn SharedMemory(comptime T: type) type {
         size: usize,
         ptr: ?[]align(4096) u8,
         data: []T,
+        // TODO: write a header to the shared memory, in this way "data" will always be a pointer
+        // to a struct
 
         pub fn create(name: []const u8, count: usize) !Self {
             const size = count * @sizeOf(T);
             const result: Shared = switch (tag) {
-                .linux, .freebsd => blk: {
-                    // const _create = comptime if (use_shm_funcs) createPosix else createMemfdBased;
-                    // break :blk try _create(name, size);
-                    if (use_shm_funcs) {
-                        break :blk try createPosix(name, size);
-                    }
-                    break :blk try createMemfdBased(name, size);
-                },
-                .windows => try createWindows(name, size),
-                else => try createPosix(name, size),
+                // .linux, .freebsd => blk: {
+                //     if (use_shm_funcs) {
+                //         break :blk try createPosix(name, size);
+                //     }
+                //     break :blk try createMemfdBased(name, size);
+                // },windowsCreate
+                .windows => try windowsCreate(name, size),
+                else => try posixCreate(name, size),
             };
             const data: []T = @as([*]T, @ptrCast(@alignCast(result.data.ptr)))[0..count];
             return .{
@@ -48,16 +64,14 @@ pub fn SharedMemory(comptime T: type) type {
 
         pub fn open(name: []const u8) !Self {
             const result = switch (tag) {
-                .linux, .freebsd => blk: {
-                    // const _open = comptime if (use_shm_funcs) openPosix else openMemfdBased;
-                    // break :blk try _open(name);
-                    if (use_shm_funcs) {
-                        break :blk try openPosix(name);
-                    }
-                    break :blk try openMemfdBased(name);
-                },
-                .windows => try openWindows(name),
-                else => try openPosix(name),
+                // .linux, .freebsd => blk: {
+                //     if (use_shm_funcs) {
+                //         break :blk try openPosix(name);
+                //     }
+                //     break :blk try openMemfdBased(name);
+                // },
+                .windows => try windowsOpen(name),
+                else => try posixOpen(name),
             };
             const count = @divExact(result.size, @sizeOf(T));
             const data: []T = @as([*]T, @ptrCast(@alignCast(result.data.ptr)))[0..count];
@@ -70,11 +84,19 @@ pub fn SharedMemory(comptime T: type) type {
             };
         }
 
+        pub fn exists(path: []const u8) bool {
+            return switch (tag) {
+                // .linux, .freebsd => existsMemfdBased(path),
+                .windows => windowsMapExists(path),
+                else => posixMapExists(path),
+            };
+        }
+
         pub fn close(self: *Self) void {
             switch (tag) {
-                .linux, .freebsd => closeMemfdBased(self.ptr, self.handle),
-                // .windows => closeWindows(self),
-                else => closePosix(self.ptr, self.handle, self.name),
+                // .linux, .freebsd => closeMemfdBased(self.ptr, self.handle, self.name),
+                .windows => windowsClose(self, self.name),
+                else => posixClose(self.ptr, self.handle, self.name),
             }
         }
     };
@@ -84,6 +106,7 @@ const Shared = struct {
     data: []align(4096) u8,
     size: usize,
     fd: std.fs.File.Handle,
+    pid: ?pid_t = null,
 };
 
 fn createMemfdBased(name: []const u8, size: usize) !Shared {
@@ -100,14 +123,26 @@ fn createMemfdBased(name: []const u8, size: usize) !Shared {
         0,
     );
 
+    const pid: pid_t = switch (tag) {
+        .linux => std.os.linux.getpid(),
+        else => std.c.getpid(),
+    };
+
+    var buffer = [_]u8{0} ** std.fs.MAX_NAME_BYTES;
+    const path = std.fmt.bufPrintZ(&buffer, "/proc/{d}/fd/{d}", .{ pid, fd }) catch unreachable;
+
+    assert(existsMemfdBased(path) == true);
     return .{
         .data = ptr,
         .size = size,
         .fd = fd,
+        .pid = pid,
     };
 }
 
 fn openMemfdBased(name: []const u8) !Shared {
+    assert(existsMemfdBased(name) == true);
+
     const handle = try std.fs.openFileAbsolute(name, .{});
     const fd = handle.handle;
     const stat = try std.posix.fstat(fd);
@@ -129,12 +164,23 @@ fn openMemfdBased(name: []const u8) !Shared {
     };
 }
 
-fn closeMemfdBased(ptr: ?[]u8, fd: std.fs.File.Handle) void {
-    if (ptr) |p| std.posix.munmap(@alignCast(p));
-    std.posix.close(fd);
+fn existsMemfdBased(name: []const u8) bool {
+    const handle = std.fs.openFileAbsolute(name, .{}) catch return false;
+    handle.close();
+    return true;
 }
 
-fn createPosix(name: []const u8, size: usize) !Shared {
+fn closeMemfdBased(ptr: ?[]u8, fd: std.fs.File.Handle, name: []const u8) void {
+    // assert(existsMemfdBased(name) == true);
+    if (ptr) |p| std.posix.munmap(@alignCast(p));
+    std.posix.close(fd);
+
+    assert(existsMemfdBased(name) == false);
+}
+
+fn posixCreate(name: []const u8, size: usize) !Shared {
+    assert(posixMapExists(name) == false);
+
     const permissions: std.posix.mode_t = 0o666;
     const flags: std.posix.O = .{
         .ACCMODE = .RDWR,
@@ -145,6 +191,22 @@ fn createPosix(name: []const u8, size: usize) !Shared {
     var buffer = [_]u8{0} ** std.fs.MAX_NAME_BYTES;
     const name_z = try std.fmt.bufPrintZ(&buffer, "{s}", .{name});
     const fd = std.c.shm_open(name_z, @bitCast(flags), permissions);
+
+    if (fd == -1) {
+        const err_no: u32 = @bitCast(std.c._errno().*);
+        const err: std.posix.E = @enumFromInt(err_no);
+        switch (err) {
+            .SUCCESS => @panic("Success"),
+            .ACCES => return error.AccessDenied,
+            .EXIST => return error.PathAlreadyExists,
+            .INVAL => unreachable,
+            .MFILE => return error.ProcessFdQuotaExceeded,
+            .NAMETOOLONG => return error.NameTooLong,
+            .NFILE => return error.SystemFdQuotaExceeded,
+            .NOENT => return error.FileNotFound,
+            else => return std.posix.unexpectedErrno(err),
+        }
+    }
 
     try std.posix.ftruncate(fd, @intCast(size));
 
@@ -159,6 +221,8 @@ fn createPosix(name: []const u8, size: usize) !Shared {
         0,
     );
 
+    assert(posixMapExists(name) == true);
+
     return .{
         .data = ptr,
         .size = size,
@@ -166,7 +230,9 @@ fn createPosix(name: []const u8, size: usize) !Shared {
     };
 }
 
-fn openPosix(name: []const u8) !Shared {
+fn posixOpen(name: []const u8) !Shared {
+    assert(posixMapExists(name) == true);
+
     const permissions: std.posix.mode_t = 0o666;
     const flags: std.posix.O = .{
         .ACCMODE = .RDWR,
@@ -211,7 +277,31 @@ fn openPosix(name: []const u8) !Shared {
     };
 }
 
-fn closePosix(ptr: ?[]u8, fd: std.fs.File.Handle, name: []const u8) void {
+fn posixMapExists(name: []const u8) bool {
+    const flags: std.posix.O = .{
+        .ACCMODE = .RDONLY,
+    };
+
+    var buffer = [_]u8{0} ** std.fs.max_path_bytes;
+    const name_z = std.fmt.bufPrintZ(&buffer, "{s}", .{name}) catch unreachable;
+
+    const rc = std.c.shm_open(name_z, @bitCast(flags), 0o444);
+
+    if (rc >= 0) {
+        return true;
+    }
+
+    return false;
+}
+
+fn posixForceClose(name: []const u8) void {
+    var buffer = [_]u8{0} ** std.fs.MAX_NAME_BYTES;
+    const name_z = std.fmt.bufPrintZ(&buffer, "{s}", .{name}) catch unreachable;
+    const rc = std.c.shm_unlink(name_z);
+    std.debug.print("rc:\t{d}\n", .{rc});
+}
+
+fn posixClose(ptr: ?[]u8, fd: std.fs.File.Handle, name: []const u8) void {
     if (ptr) |p| std.posix.munmap(@alignCast(p));
 
     std.posix.close(fd);
@@ -219,22 +309,25 @@ fn closePosix(ptr: ?[]u8, fd: std.fs.File.Handle, name: []const u8) void {
     var buffer = [_]u8{0} ** std.fs.MAX_NAME_BYTES;
     const name_z = std.fmt.bufPrintZ(&buffer, "{s}", .{name}) catch unreachable;
     const rc = std.c.shm_unlink(name_z);
-    if (rc != -1) {
-        const err_no = std.c._errno().*;
-        const err: std.posix.E = @enumFromInt(err_no);
-        switch (err) {
-            .SUCCESS => return,
-            .ACCES => return error.AccessDenied,
-            .PERM => return error.AccessDenied,
-            .INVAL => unreachable,
-            .NAMETOOLONG => return error.NameTooLong,
-            .NOENT => return, //return error.FileNotFound,
-            else => return std.posix.unexpectedErrno(err),
-        }
-    }
+    _ = rc;
+    // if (rc == -1) {
+    //     const err_no = std.c._errno().*;
+    //     const err: std.posix.E = @enumFromInt(err_no);
+    //     switch (err) {
+    //         .SUCCESS => return,
+    //         .ACCES => return error.AccessDenied,
+    //         .PERM => return error.AccessDenied,
+    //         .INVAL => unreachable,
+    //         .NAMETOOLONG => return error.NameTooLong,
+    //         .NOENT => return, //return error.FileNotFound,
+    //         else => return std.posix.unexpectedErrno(err),
+    //     }
+    // }
+    assert(posixMapExists(name) == false);
 }
 
-fn createWindows(name: []const u8, size: usize) !Shared {
+fn windowsCreate(name: []const u8, size: usize) !Shared {
+    assert(windowsMapExists(name) == false);
     const handle = try windows.CreateFileMappingW(
         windows.INVALID_HANDLE_VALUE,
         null,
@@ -245,6 +338,7 @@ fn createWindows(name: []const u8, size: usize) !Shared {
     );
 
     const ptr = try windows.MapViewOfFile(handle, windows.FILE_MAP_ALL_ACCESS, 0, 0, size);
+    assert(windowsMapExists(name) == false);
 
     return .{
         .data = ptr,
@@ -253,7 +347,8 @@ fn createWindows(name: []const u8, size: usize) !Shared {
     };
 }
 
-fn openWindows(name: []const u8, size: usize) !Shared {
+fn windowsOpen(name: []const u8, size: usize) !Shared {
+    assert(windowsMapExists(name) == true);
     const handle = try windows.OpenFileMappingW(windows.FILE_MAP_ALL_ACCESS, false, name);
 
     const ptr = try windows.MapViewOfFile(handle, windows.FILE_MAP_ALL_ACCESS, 0, 0, size);
@@ -265,10 +360,32 @@ fn openWindows(name: []const u8, size: usize) !Shared {
     };
 }
 
-fn closeWindows(self: *Shared) void {
+fn windowsMapExists(name: []const u8) bool {
+    var buffer = [_]u8{0} ** std.fs.max_path_bytes;
+    const name_z = std.fmt.bufPrintZ(&buffer, "{s}", .{name}) catch unreachable;
+    const handle: ?windows.HANDLE = winMem.OpenFileMapping(
+        winMem.FILE_MAP_READ,
+        winZig.FALSE,
+        name_z,
+    );
+
+    if (handle) |h| {
+        const file: std.fs.File = .{
+            .handle = h,
+        };
+        file.close();
+        return true;
+    }
+
+    return false;
+}
+
+fn windowsClose(self: *Shared, name: []const u8) void {
+    assert(windowsMapExists(name) == true);
     if (self.ptr) |ptr| _ = windows.UnmapViewOfFile(ptr);
     windows.CloseHandle(self.handle);
     self.* = undefined;
+    assert(windowsMapExists(name) == false);
 }
 
 test "SharedMemory - Single Struct" {
@@ -281,9 +398,7 @@ test "SharedMemory - Single Struct" {
     const shm_name = "/test_single_struct";
     const count = 1;
 
-    // if (pz.exists(shm_name)) {
-    //     _ = std.c.shm_unlink(shm_name);
-    // }
+    //posixForceClose(shm_name);
 
     var shm: SharedStruct = try SharedStruct.create(shm_name, count);
     defer shm.close();
@@ -320,9 +435,8 @@ test "SharedMemory - Array" {
     const array_size = 10;
 
     const shm_name = "/test_array";
-    // if (pz.exists(shm_name)) {
-    //     _ = std.c.shm_unlink(shm_name);
-    // }
+
+    // posixForceClose(shm_name);
 
     var shm = try SharedMemory(i32).create(shm_name, array_size);
     defer shm.close();
@@ -366,10 +480,10 @@ test "SharedMemory - Structure with Array" {
     };
 
     const shm_name = "/test_struct_with_array";
+
+    //posixForceClose(shm_name);
+
     const count = 1;
-    // if (pz.exists(shm_name)) {
-    //     _ = std.c.shm_unlink(shm_name);
-    // }
 
     var shm = try SharedMemory(TestStruct).create(shm_name, count);
     defer shm.close();
