@@ -6,7 +6,7 @@ const magic_ring = switch (@import("builtin").target.os.tag) {
     else => @compileError("Platform not supported"),
 };
 
-// const shm = @import("platforms/shared_memory.zig");
+const shm = @import("platforms/shared_memory.zig");
 
 const config = @import("configuration.zig");
 
@@ -100,5 +100,5 @@ const config = @import("configuration.zig");
 test {
     _ = magic_ring;
     _ = config;
-    // _ = shm;
+    _ = shm;
 }
