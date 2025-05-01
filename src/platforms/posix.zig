@@ -17,6 +17,20 @@ const OFlags = switch (tag) {
 
 pub const MagicRingPosixError = std.posix.MMapError || utils.MagicRingError;
 
+/// Creates a magic ring buffer from a file descriptor using memory mapping.
+///
+/// This function maps a region of memory twice its size and creates a mirror
+/// mapping to enable seamless wraparound for the ring buffer.
+///
+/// Args:
+///     file_descriptor: The file descriptor to map.
+///     size: The size of the ring buffer.
+///     protection: Memory protection flags for the mapping.
+///
+/// Returns:
+///     A utils.Maps struct containing the buffer and mirror mappings.
+///
+/// Error: std.posix.MMapError if memory mapping fails.
 fn magicRingFromFD(
     file_descriptor: std.posix.fd_t,
     size: usize,
@@ -57,6 +71,20 @@ fn magicRingFromFD(
 pub const CreateError =
     std.posix.OpenError || std.posix.MemFdCreateError || std.posix.TruncateError || std.posix.MMapError;
 
+/// Creates a new magic ring buffer with the given name and size.
+///
+/// This function creates a shared memory object or a memory file descriptor,
+/// depending on the platform and configuration. It then maps the memory
+/// and sets up the magic ring buffer.
+///
+/// Args:
+///     name: The name of the shared memory object or file.
+///     size: The size of the ring buffer.
+///
+/// Returns:
+///     A utils.MagicRingBase struct representing the created magic ring buffer.
+///
+/// Error: CreateError if any step in the creation process fails.
 pub fn create(name: []const u8, size: u32) CreateError!utils.MagicRingBase {
     const fd = if (use_shm_funcs) blk: {
         var buffer: [std.fs.MAX_NAME_BYTES]u8 = undefined;
@@ -112,6 +140,19 @@ pub fn create(name: []const u8, size: u32) CreateError!utils.MagicRingBase {
 
 pub const ConnectError = std.posix.FStatError || std.fs.File.OpenError || std.posix.MMapError;
 
+/// Connects to an existing magic ring buffer with the given name and access mode.
+///
+/// This function opens an existing shared memory object or file and maps it
+/// to create a magic ring buffer connection.
+///
+/// Args:
+///     name: The name of the shared memory object or file to connect to.
+///     access: The desired access mode (ReadOnly or ReadWrite).
+///
+/// Returns:
+///     A utils.MagicRingBase struct representing the connected magic ring buffer.
+///
+/// Error: ConnectError if connection or mapping fails.
 pub fn connect(name: []const u8, access: utils.AccessMode) ConnectError!utils.MagicRingBase {
     const flags: OFlags = switch (access) {
         .ReadOnly => .{
@@ -175,6 +216,16 @@ pub fn connect(name: []const u8, access: utils.AccessMode) ConnectError!utils.Ma
     };
 }
 
+/// Checks if a magic ring buffer with the given name exists.
+///
+/// This function attempts to open the shared memory object or file
+/// to determine if it exists.
+///
+/// Args:
+///     name: The name of the shared memory object or file to check.
+///
+/// Returns:
+///     A boolean indicating whether the magic ring buffer exists.
 pub fn exists(name: []const u8) bool {
     const flags: OFlags = .{
         .ACCMODE = .RDONLY,
@@ -196,6 +247,15 @@ pub fn exists(name: []const u8) bool {
     }
 }
 
+/// Closes and cleans up a magic ring buffer.
+///
+/// This function unmaps the memory, closes the file descriptor,
+/// and if using shared memory functions, unlinks the shared memory object.
+///
+/// Args:
+///     map: A pointer to the utils.MagicRingBase struct to close.
+///
+/// Error: std.posix.UnlinkError if unlinking the shared memory object fails.
 pub fn close(map: *utils.MagicRingBase) std.posix.UnlinkError!void {
     std.posix.munmap(map.buffer);
     map.buffer = undefined;
