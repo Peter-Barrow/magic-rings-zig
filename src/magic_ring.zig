@@ -628,7 +628,7 @@ test StructOfArraysFromStruct {
 /// Memory layout:
 /// [Header][Primary Buffer][Secondary Buffer]
 /// Where Secondary Buffer is a mirror of Primary Buffer
-const RingBufferLayout = struct {
+pub const RingBufferLayout = struct {
     // System information
     page_size: usize,
     allocation_granularity: usize,
