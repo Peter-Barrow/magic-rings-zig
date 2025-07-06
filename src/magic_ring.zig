@@ -573,6 +573,50 @@ fn combinedRingBufferFromBytes(comptime T: type, bytes: [*]u8, length: usize) []
     return @ptrCast(as_type[0 .. length * 2]);
 }
 
+fn StructOfArraysFromStruct(comptime T: type) type {
+    const fields = @typeInfo(T).@"struct".fields;
+    comptime var fields_new: []std.builtin.Type.StructField = .{} ** fields.len;
+
+    const soa: std.builtin.Type = .{
+        .@"struct" = .{
+            .layout = .auto,
+            .fields = &fields_new,
+            .decls = &.{},
+            .is_tuple = false,
+        },
+    };
+
+    return @Type(soa);
+}
+
+test StructOfArraysFromStruct {
+    const target = struct { red: u8, green: u8, blue: u8 };
+    _ = target;
+}
+
+// pub fn MultiMagicRingWithHeader(comptime T: type, comptime H: type) type {
+//     const info_elem = @typeInfo(T);
+//     _ = switch (info_elem) {
+//         .@"struct" => true,
+//         else => @compileError("T " ++ @typeName(T) ++ " must be a struct\n"),
+//     };
+//
+//     return struct {
+//         const Self = @This();
+//         const Header = State.withFields(H);
+//         const FieldSizes = 0;
+//         const HeaderSize = @sizeOf(Header);
+//
+//         allocator: ?std.mem.Allocator = null,
+//
+//         name: []const u8,
+//
+//         buffer_info: RingBufferInfo,
+//
+//         header: *Header,
+//     };
+// }
+
 /// RingBufferLayout calculates and stores the memory layout for a ring buffer.
 /// It handles platform-specific alignment requirements for Windows and POSIX.
 ///
@@ -946,38 +990,150 @@ pub fn posixCloseRingBuffer(rb: *RingBufferInfo) !void {
     rb.* = undefined;
 }
 
-// Basic creation and functionality test
-test "posix ring buffer - basic creation" {
-    if (@import("builtin").os.tag == .windows) {
-        return error.SkipZigTest;
-    }
+fn test_entry(
+    name: []const u8,
+    element_size: usize,
+    element_count: usize,
+    header_size: usize,
+) !RingBufferInfo {
+    std.debug.print(
+        "Test: {s},\tPlatform:{s}, libc: {any}\n",
+        .{
+            name,
+            @tagName(tag),
+            @import("builtin").link_libc,
+        },
+    );
 
-    if (!@import("builtin").link_libc) {
-        return error.SkipZigTest;
-    }
+    return switch (tag) {
+        .linux, .freebsd => {
+            if (@import("builtin").link_libc) {
+                return posixCreateRingBufferWithHeader(
+                    name,
+                    element_size,
+                    element_count,
+                    header_size,
+                );
+            }
+            return memfdCreateRingBufferWithHeader(
+                std.testing.allocator,
+                name,
+                element_size,
+                element_count,
+                header_size,
+            );
+        },
+        .windows => try windowsCreateRingBufferWithHeader(
+            name,
+            element_size,
+            element_count,
+            header_size,
+        ),
+        else => try posixCreateRingBufferWithHeader(
+            name,
+            element_size,
+            element_count,
+            header_size,
+        ),
+    };
+}
 
-    std.debug.print("\nposix ring buffer - basic creation\n", .{});
+fn test_exists(name: []const u8) bool {
+    return switch (tag) {
+        .linux, .freebsd => blk: {
+            if (@import("builtin").link_libc) {
+                break :blk shared_memory.posixMapExists(name);
+            }
+            break :blk shared_memory.memfdBasedExists(std.testing.allocator, name);
+        },
+        .windows => shared_memory.windowsMapExists(name),
+        else => shared_memory.posixMapExists(name),
+    };
+}
+
+fn test_open(
+    name: []const u8,
+    element_size: usize,
+    element_count: usize,
+    header_size: usize,
+) !RingBufferInfo {
+    return switch (tag) {
+        .linux, .freebsd => {
+            if (@import("builtin").link_libc) {
+                return posixOpenRingBuffer(
+                    name,
+                    element_size,
+                    element_count,
+                    header_size,
+                );
+            }
+            return memfdOpenRingBuffer(
+                std.testing.allocator,
+                name,
+                element_size,
+                element_count,
+                header_size,
+            );
+        },
+        .windows => try windowsOpenRingBuffer(
+            name,
+            element_size,
+            element_count,
+            header_size,
+        ),
+        else => try posixOpenRingBuffer(
+            name,
+            element_size,
+            element_count,
+            header_size,
+        ),
+    };
+}
+
+fn test_forceclose(name: []const u8) void {
+    if (test_exists(name) == false) return;
+
+    switch (tag) {
+        .windows => return,
+        else => {
+            if (@import("builtin").link_libc) {
+                shared_memory.posixForceClose(name);
+            }
+        },
+    }
+}
+
+fn test_cleanup(rb: *RingBufferInfo) !void {
+    const os_tag = @import("builtin").os.tag;
+    return switch (os_tag) {
+        .linux, .freebsd => {
+            if (@import("builtin").link_libc) {
+                return posixCloseRingBuffer(rb);
+            }
+            return memfdCloseRingBuffer(std.testing.allocator, rb);
+        },
+        .windows => try windowsCloseRingBuffer(rb),
+        else => try posixCloseRingBuffer(rb),
+    };
+}
+
+test "create ring buffer" {
 
     // Define our test parameters
-    const buffer_name = "/test_basic_buffer";
+    const buffer_name = if (tag == .windows) "test_creation" else "/test_creation";
     const element_type = u64;
     const element_size = @sizeOf(element_type);
     const element_count: usize = 1000;
     const header_size = @sizeOf(RingBufferHeader);
 
-    // Clean up any existing buffers
-    if (try posixRingBufferExists(buffer_name)) {
-        shared_memory.posixForceClose(buffer_name);
-    }
-
-    // Create the ring buffer
-    var ring_buffer = try posixCreateRingBufferWithHeader(
+    var ring_buffer = try test_entry(
         buffer_name,
         element_size,
         element_count,
         header_size,
     );
-    defer posixCloseRingBuffer(&ring_buffer) catch {};
+
+    defer test_cleanup(&ring_buffer) catch {};
 
     // Verify the layout is calculated correctly
     try std.testing.expectEqual(@sizeOf(RingBufferHeader), ring_buffer.layout.header_size_raw);
@@ -1000,37 +1156,22 @@ test "posix ring buffer - basic creation" {
     try std.testing.expectEqual(@as(f32, 2.0), header.num_channels);
 }
 
-// Test basic buffer writing and reading
-test "posix ring buffer - basic writes" {
-    if (@import("builtin").os.tag == .windows) {
-        return error.SkipZigTest;
-    }
-
-    if (!@import("builtin").link_libc) {
-        return error.SkipZigTest;
-    }
-    std.debug.print("\nposix ring buffer - basic writes\n", .{});
-
+test "basic writes" {
     // Define our test parameters
-    const buffer_name = "/test_basic_writes";
+    const buffer_name = if (tag == .windows) "test_basic_writes" else "/test_basic_writes";
     const element_type = u64;
     const element_size = @sizeOf(element_type);
     const element_count: usize = 1000;
     const header_size = @sizeOf(RingBufferHeader);
 
-    // Clean up any existing buffers
-    if (try posixRingBufferExists(buffer_name)) {
-        shared_memory.posixForceClose(buffer_name);
-    }
-
-    // Create the ring buffer
-    var ring_buffer = try posixCreateRingBufferWithHeader(
+    var ring_buffer = try test_entry(
         buffer_name,
         element_size,
         element_count,
         header_size,
     );
-    defer posixCloseRingBuffer(&ring_buffer) catch {};
+
+    defer test_cleanup(&ring_buffer) catch {};
 
     // Get typed slices for the buffer
     const buffer: []element_type = @ptrCast(
@@ -1066,38 +1207,24 @@ test "posix ring buffer - basic writes" {
     );
 }
 
-// Test wrap-around functionality
-test "posix ring buffer - wrap-around" {
-    if (@import("builtin").os.tag == .windows) {
-        return error.SkipZigTest;
-    }
-
-    if (!@import("builtin").link_libc) {
-        return error.SkipZigTest;
-    }
-    std.debug.print("\nposix ring buffer - wrap-around\n", .{});
+test "wrap-around" {
 
     // Define our test parameters
-    const buffer_name = "/test_wrap_around";
+    const buffer_name = if (tag == .windows) "test_wrap_around" else "/test_wrap_around";
     const element_type = u64;
     const element_size = @sizeOf(element_type);
     const element_count: usize = 1000;
     const header_size = @sizeOf(RingBufferHeader);
 
-    // Clean up any existing buffers
-    if (try posixRingBufferExists(buffer_name)) {
-        shared_memory.posixForceClose(buffer_name);
-    }
-
-    // Create the ring buffer
-    var ring_buffer = try posixCreateRingBufferWithHeader(
+    var ring_buffer = try test_entry(
         buffer_name,
         element_size,
         element_count,
         header_size,
     );
-    defer posixCloseRingBuffer(&ring_buffer) catch {};
 
+    defer test_cleanup(&ring_buffer) catch {};
+    //
     // Create typed slices for access
     const buffer: []element_type = @ptrCast(
         @as(
@@ -1167,37 +1294,23 @@ test "posix ring buffer - wrap-around" {
     );
 }
 
-// Test mirroring between primary and secondary views
-test "posix ring buffer - mirroring" {
-    if (@import("builtin").os.tag == .windows) {
-        return error.SkipZigTest;
-    }
-
-    if (!@import("builtin").link_libc) {
-        return error.SkipZigTest;
-    }
-    std.debug.print("\nposix ring buffer - mirroring\n", .{});
+test "mirroring" {
 
     // Define our test parameters
-    const buffer_name = "/test_mirroring";
+    const buffer_name = if (tag == .windows) "test_mirroring" else "/test_mirroring";
     const element_type = u64;
     const element_size = @sizeOf(element_type);
     const element_count: usize = 1000;
     const header_size = @sizeOf(RingBufferHeader);
 
-    // Clean up any existing buffers
-    if (try posixRingBufferExists(buffer_name)) {
-        shared_memory.posixForceClose(buffer_name);
-    }
-
-    // Create the ring buffer
-    var ring_buffer = try posixCreateRingBufferWithHeader(
+    var ring_buffer = try test_entry(
         buffer_name,
         element_size,
         element_count,
         header_size,
     );
-    defer posixCloseRingBuffer(&ring_buffer) catch {};
+
+    defer test_cleanup(&ring_buffer) catch {};
 
     // Create typed slices for access
     const primary_buffer: []element_type = @ptrCast(
@@ -1245,37 +1358,31 @@ test "posix ring buffer - mirroring" {
     );
 }
 
-// Test opening an existing buffer with bidirectional sharing verification
-test "posix ring buffer - open existing and modify bidirectionally" {
-    if (@import("builtin").os.tag == .windows) {
-        return error.SkipZigTest;
-    }
+test "open existing and modify bidirectionally" {
 
-    if (!@import("builtin").link_libc) {
-        return error.SkipZigTest;
+    if (@import("builtin").link_libc == false) {
+        std.debug.print("memfd implementation produces immutable view, skipping...\n", .{});
+        if (tag == .linux) return error.SkipZigTest;
+        if (tag == .freebsd) return error.SkipZigTest;
     }
-    std.debug.print("\nposix ring buffer - open existing and bidirectional test\n", .{});
 
     // Define our test parameters
-    const buffer_name = "/test_open_existing";
+    const buffer_name = if (tag == .windows) "test_open_existing" else "/test_open_existing";
     const element_type = u64;
     const element_size = @sizeOf(element_type);
     const element_count: usize = 1000;
     const header_size = @sizeOf(RingBufferHeader);
 
-    // Clean up any existing buffers
-    if (try posixRingBufferExists(buffer_name)) {
-        shared_memory.posixForceClose(buffer_name);
-    }
+    test_forceclose(buffer_name);
 
-    // Create the ring buffer
-    var ring_buffer = try posixCreateRingBufferWithHeader(
+    var ring_buffer = try test_entry(
         buffer_name,
         element_size,
         element_count,
         header_size,
     );
-    defer posixCloseRingBuffer(&ring_buffer) catch {};
+
+    defer test_cleanup(&ring_buffer) catch {};
 
     // Initialize the header with test values
     const header: *RingBufferHeader = @ptrCast(@alignCast(ring_buffer.header.ptr));
@@ -1284,6 +1391,8 @@ test "posix ring buffer - open existing and modify bidirectionally" {
     header.count = 22;
     header.resolution = 44100.0;
     header.num_channels = 2.0;
+
+    std.debug.print("name:\t{s}\n", .{buffer_name});
 
     // Write a pattern to the buffer
     const buffer: []element_type = @ptrCast(
@@ -1299,13 +1408,14 @@ test "posix ring buffer - open existing and modify bidirectionally" {
     }
 
     // Try to open the buffer
-    var opened_buffer = try posixOpenRingBuffer(
+    var opened_buffer = try test_open(
         buffer_name,
         element_size,
         element_count,
         header_size,
     );
-    defer posixCloseRingBuffer(&opened_buffer) catch {};
+
+    defer test_cleanup(&opened_buffer) catch {};
 
     // Get typed slices for the opened buffer
     const opened_header: *RingBufferHeader = @ptrCast(@alignCast(opened_buffer.header.ptr));
@@ -1436,88 +1546,62 @@ test "posix ring buffer - open existing and modify bidirectionally" {
     );
 }
 
-// Test checking if a buffer exists
-test "posix ring buffer - check exists" {
-    if (@import("builtin").os.tag == .windows) {
-        return error.SkipZigTest;
+test "check exists" {
+    if (@import("builtin").link_libc == false) {
+        if (tag == .linux) return error.SkipZigTest;
+        if (tag == .freebsd) return error.SkipZigTest;
     }
-
-    if (!@import("builtin").link_libc) {
-        return error.SkipZigTest;
-    }
-
-    std.debug.print("\nposix ring buffer - check exists\n", .{});
 
     // Define our test parameters
-    const buffer_name = "/test_exists_check";
+    const buffer_name = if (tag == .windows) "test_exists" else "/test_exists";
     const element_type = u64;
     const element_size = @sizeOf(element_type);
-    const element_count: usize = 10;
+    const element_count: usize = 1000;
     const header_size = @sizeOf(RingBufferHeader);
 
-    // Make sure the buffer doesn't exist initially
-    if (try posixRingBufferExists(buffer_name)) {
-        shared_memory.posixForceClose(buffer_name);
-    }
+    try std.testing.expect(test_exists(buffer_name) == false);
 
-    // Check that it doesn't exist yet
-    const exists_before = try posixRingBufferExists(buffer_name);
-    try std.testing.expect(!exists_before);
-
-    // Create the buffer
-    var ring_buffer = try posixCreateRingBufferWithHeader(
+    var ring_buffer = try test_entry(
         buffer_name,
         element_size,
         element_count,
         header_size,
     );
-    defer posixCloseRingBuffer(&ring_buffer) catch {};
 
-    // Now check that it exists
-    const exists_after = try posixRingBufferExists(buffer_name);
+    defer test_cleanup(&ring_buffer) catch {};
+
+    const exists_after = test_exists(buffer_name);
     try std.testing.expect(exists_after);
 
     // Check a non-existent buffer
-    const non_exists = try posixRingBufferExists("/non_existing_buffer");
-    try std.testing.expect(!non_exists);
+    try std.testing.expect(test_exists("/non_existing_buffer") == false);
 }
 
-// Test large header with small buffer
-test "posix ring buffer - large header small buffer" {
-    if (@import("builtin").os.tag == .windows) {
-        return error.SkipZigTest;
-    }
-
-    if (!@import("builtin").link_libc) {
-        return error.SkipZigTest;
-    }
-    std.debug.print("\nposix ring buffer - large header small buffer\n", .{});
-
-    // Define test parameters
-    const buffer_name = "/test_large_header";
+test "large header small buffer" {
+    const buffer_name = if (tag == .windows) "test_large_header_small_buffer" else "/test_large_header_small_buffer";
     const element_type = u64;
     const element_size = @sizeOf(element_type);
-    const element_count: usize = 10;
+    const element_count: usize = 1000;
     const large_header_size = 1000; // 1KB header
 
-    // Clean up any existing buffers
-    if (try posixRingBufferExists(buffer_name)) {
-        shared_memory.posixForceClose(buffer_name);
-    }
+    test_forceclose(buffer_name);
+    try std.testing.expect(test_exists(buffer_name) == false);
 
-    // Create the buffer
-    var ring_buffer = try posixCreateRingBufferWithHeader(
+    var ring_buffer = try test_entry(
         buffer_name,
         element_size,
         element_count,
         large_header_size,
     );
-    defer posixCloseRingBuffer(&ring_buffer) catch {};
+
+    defer test_cleanup(&ring_buffer) catch {};
 
     // Verify layout calculations
     try std.testing.expect(ring_buffer.layout.header_size_raw == large_header_size);
     try std.testing.expect(ring_buffer.layout.header_size_aligned >= large_header_size);
-    try std.testing.expect(ring_buffer.layout.header_size_aligned % ring_buffer.layout.page_size == 0);
+    try std.testing.expect(
+        ring_buffer.layout.header_size_aligned % ring_buffer.layout.page_size == 0,
+    );
     try std.testing.expect(ring_buffer.layout.actual_element_count >= element_count);
 
     // Test the buffer with a simple pattern
@@ -1692,381 +1776,6 @@ fn memfdClose(allocator: std.mem.Allocator, name: []const u8, mapping: *Mapping)
         name,
     );
     mapping.* = undefined;
-}
-
-// Basic memfd creation and functionality test
-test "memfd ring buffer - basic creation" {
-    // Only run on Linux or FreeBSD
-    if (switch (@import("builtin").os.tag) {
-        .linux, .freebsd => false,
-        else => true,
-    }) {
-        return error.SkipZigTest;
-    }
-
-    std.debug.print("\nmemfd ring buffer - basic creation\n", .{});
-
-    // Define our test parameters
-    const buffer_name = "/test_memfd_basic";
-    const element_type = u64;
-    const element_size = @sizeOf(element_type);
-    const element_count: usize = 1000;
-    const header_size = @sizeOf(RingBufferHeader);
-
-    // Setup allocator
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    // Create the ring buffer
-    var ring_buffer = try memfdCreateRingBufferWithHeader(
-        allocator,
-        buffer_name,
-        element_size,
-        element_count,
-        header_size,
-    );
-    defer memfdCloseRingBuffer(allocator, &ring_buffer) catch {};
-
-    // Verify the layout is calculated correctly
-    try std.testing.expectEqual(@sizeOf(RingBufferHeader), ring_buffer.layout.header_size_raw);
-    try std.testing.expectEqual(element_size * element_count, ring_buffer.layout.buffer_size_raw);
-    try std.testing.expect(ring_buffer.layout.actual_element_count >= element_count);
-
-    // Initialize the header with test values
-    const header: *RingBufferHeader = @ptrCast(@alignCast(ring_buffer.header.ptr));
-    header.tail = 0;
-    header.head = 0;
-    header.count = 0;
-    header.resolution = 44100.0;
-    header.num_channels = 2.0;
-
-    // Verify header values are set correctly
-    try std.testing.expectEqual(@as(u64, 0), header.tail);
-    try std.testing.expectEqual(@as(u64, 0), header.head);
-    try std.testing.expectEqual(@as(u64, 0), header.count);
-    try std.testing.expectEqual(@as(f64, 44100.0), header.resolution);
-    try std.testing.expectEqual(@as(f32, 2.0), header.num_channels);
-}
-
-// Test memfd basic buffer writing and reading
-test "memfd ring buffer - basic writes" {
-    // Only run on Linux or FreeBSD
-    if (switch (@import("builtin").os.tag) {
-        .linux, .freebsd => false,
-        else => true,
-    }) {
-        return error.SkipZigTest;
-    }
-    std.debug.print("\nmemfd ring buffer - basic writes\n", .{});
-
-    // Define our test parameters
-    const buffer_name = "/test_memfd_writes";
-    const element_type = u64;
-    const element_size = @sizeOf(element_type);
-    const element_count: usize = 1000;
-    const header_size = @sizeOf(RingBufferHeader);
-
-    // Setup allocator
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    // Create the ring buffer
-    var ring_buffer = try memfdCreateRingBufferWithHeader(
-        allocator,
-        buffer_name,
-        element_size,
-        element_count,
-        header_size,
-    );
-    defer memfdCloseRingBuffer(allocator, &ring_buffer) catch {};
-
-    // Get typed slices for the buffer
-    const buffer: []element_type = @ptrCast(
-        @as(
-            [*]element_type,
-            @ptrCast(@alignCast(ring_buffer.buffer.ptr)),
-        )[0..ring_buffer.layout.actual_element_count],
-    );
-
-    // Test writing sequential values at the beginning of the buffer
-    for (0..10) |i| {
-        buffer[i] = @intCast(i);
-    }
-
-    // Verify the values were written correctly using slice comparison
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 },
-        buffer[0..10],
-    );
-
-    // Test writing at the end of the buffer
-    const end_start = ring_buffer.layout.actual_element_count - 5;
-    for (0..5) |i| {
-        buffer[end_start + i] = @intCast(end_start + i);
-    }
-
-    // Verify sequential values at the end of the buffer
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ end_start, end_start + 1, end_start + 2, end_start + 3, end_start + 4 },
-        buffer[end_start..(end_start + 5)],
-    );
-}
-
-// Test memfd wrap-around functionality
-test "memfd ring buffer - wrap-around" {
-    // Only run on Linux or FreeBSD
-    if (switch (@import("builtin").os.tag) {
-        .linux, .freebsd => false,
-        else => true,
-    }) {
-        return error.SkipZigTest;
-    }
-    std.debug.print("\nmemfd ring buffer - wrap-around\n", .{});
-
-    // Define our test parameters
-    const buffer_name = "/test_memfd_wrap";
-    const element_type = u64;
-    const element_size = @sizeOf(element_type);
-    const element_count: usize = 1000;
-    const header_size = @sizeOf(RingBufferHeader);
-
-    // Setup allocator
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    // Create the ring buffer
-    var ring_buffer = try memfdCreateRingBufferWithHeader(
-        allocator,
-        buffer_name,
-        element_size,
-        element_count,
-        header_size,
-    );
-    defer memfdCloseRingBuffer(allocator, &ring_buffer) catch {};
-
-    // Create typed slices for access
-    const buffer: []element_type = @ptrCast(
-        @as(
-            [*]element_type,
-            @ptrCast(@alignCast(ring_buffer.combined_buffer.ptr)),
-        )[0..(ring_buffer.layout.actual_element_count * 2)],
-    );
-
-    const primary_buffer: []element_type = @ptrCast(
-        @as(
-            [*]element_type,
-            @ptrCast(@alignCast(ring_buffer.buffer.ptr)),
-        )[0..ring_buffer.layout.actual_element_count],
-    );
-
-    const secondary_buffer: []element_type = @ptrCast(
-        @as(
-            [*]element_type,
-            @ptrCast(@alignCast(ring_buffer.secondary_view.ptr)),
-        )[0..ring_buffer.layout.actual_element_count],
-    );
-
-    // Define a small pattern that makes the wraparound obvious
-    const pattern_start = ring_buffer.layout.actual_element_count - 4;
-
-    // Clear the relevant portion of the buffer
-    for (0..8) |i| {
-        if (i < 4) {
-            buffer[pattern_start + i] = 0;
-        }
-        if (i < 4) {
-            buffer[ring_buffer.layout.actual_element_count + i] = 0;
-        }
-    }
-
-    // Write data at the end of the buffer
-    buffer[pattern_start + 0] = 1020;
-    buffer[pattern_start + 1] = 1021;
-    buffer[pattern_start + 2] = 1022;
-    buffer[pattern_start + 3] = 1023;
-
-    // Write data at the start of the wraparound region
-    buffer[ring_buffer.layout.actual_element_count + 0] = 0;
-    buffer[ring_buffer.layout.actual_element_count + 1] = 1;
-    buffer[ring_buffer.layout.actual_element_count + 2] = 2;
-    buffer[ring_buffer.layout.actual_element_count + 3] = 3;
-
-    // Verify the pattern at the end of the buffer
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ 1020, 1021, 1022, 1023 },
-        primary_buffer[pattern_start..(pattern_start + 4)],
-    );
-
-    // Verify the pattern at the start of the secondary view
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ 0, 1, 2, 3 },
-        secondary_buffer[0..4],
-    );
-
-    // The key test - verify we can read across the boundary with combined view
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ 1020, 1021, 1022, 1023, 0, 1, 2, 3 },
-        buffer[pattern_start..(pattern_start + 8)],
-    );
-}
-
-// Test memfd open and read-only access
-test "memfd ring buffer - open existing" {
-    // Only run on Linux or FreeBSD
-    if (switch (@import("builtin").os.tag) {
-        .linux, .freebsd => false,
-        else => true,
-    }) {
-        return error.SkipZigTest;
-    }
-    std.debug.print("\nmemfd ring buffer - open existing\n", .{});
-
-    // Define our test parameters
-    const buffer_name = "/test_memfd_open";
-    const element_type = u64;
-    const element_size = @sizeOf(element_type);
-    const element_count: usize = 1000;
-    const header_size = @sizeOf(RingBufferHeader);
-
-    // Setup allocator
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    // Create the ring buffer
-    var ring_buffer = try memfdCreateRingBufferWithHeader(
-        allocator,
-        buffer_name,
-        element_size,
-        element_count,
-        header_size,
-    );
-    defer memfdCloseRingBuffer(allocator, &ring_buffer) catch {};
-
-    // Initialize the header with test values
-    const header: *RingBufferHeader = @ptrCast(@alignCast(ring_buffer.header.ptr));
-    header.tail = 42;
-    header.head = 20;
-    header.count = 22;
-    header.resolution = 44100.0;
-    header.num_channels = 2.0;
-
-    // Write a pattern to the buffer
-    const buffer: []element_type = @ptrCast(
-        @as(
-            [*]element_type,
-            @ptrCast(@alignCast(ring_buffer.combined_buffer.ptr)),
-        )[0..(ring_buffer.layout.actual_element_count * 2)],
-    );
-
-    // Write a simple pattern
-    for (0..10) |i| {
-        buffer[i] = @intCast(i * 100);
-    }
-
-    // Try to open the buffer
-    var opened_buffer = try memfdOpenRingBuffer(
-        allocator,
-        buffer_name,
-        element_size,
-        element_count,
-        header_size,
-    );
-    defer memfdCloseRingBuffer(allocator, &opened_buffer) catch {};
-
-    // Get typed slices for the opened buffer
-    const opened_header: *RingBufferHeader = @ptrCast(@alignCast(opened_buffer.header.ptr));
-    const opened_buffer_typed: []element_type = @ptrCast(
-        @as(
-            [*]element_type,
-            @ptrCast(@alignCast(opened_buffer.buffer.ptr)),
-        )[0..opened_buffer.layout.actual_element_count],
-    );
-
-    // Verify that the header values were preserved
-    try std.testing.expectEqual(@as(u64, 42), opened_header.tail);
-    try std.testing.expectEqual(@as(u64, 20), opened_header.head);
-    try std.testing.expectEqual(@as(u64, 22), opened_header.count);
-    try std.testing.expectEqual(@as(f64, 44100.0), opened_header.resolution);
-    try std.testing.expectEqual(@as(f32, 2.0), opened_header.num_channels);
-
-    // Verify the buffer data is still there
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ 0, 100, 200, 300, 400, 500, 600, 700, 800, 900 },
-        opened_buffer_typed[0..10],
-    );
-
-    // Note: In memfd, the second connection is read-only, so we can't test
-    // bidirectional modification like we did with POSIX shared memory
-}
-
-// Test memfd large header with small buffer
-test "memfd ring buffer - large header small buffer" {
-    // Only run on Linux or FreeBSD
-    if (switch (@import("builtin").os.tag) {
-        .linux, .freebsd => false,
-        else => true,
-    }) {
-        return error.SkipZigTest;
-    }
-    std.debug.print("\nmemfd ring buffer - large header small buffer\n", .{});
-
-    // Define test parameters
-    const buffer_name = "/test_memfd_large_header";
-    const element_type = u64;
-    const element_size = @sizeOf(element_type);
-    const element_count: usize = 10;
-    const large_header_size = 1000; // 1KB header
-
-    // Setup allocator
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    // Create the buffer
-    var ring_buffer = try memfdCreateRingBufferWithHeader(
-        allocator,
-        buffer_name,
-        element_size,
-        element_count,
-        large_header_size,
-    );
-    defer memfdCloseRingBuffer(allocator, &ring_buffer) catch {};
-
-    // Verify layout calculations
-    try std.testing.expect(ring_buffer.layout.header_size_raw == large_header_size);
-    try std.testing.expect(ring_buffer.layout.header_size_aligned >= large_header_size);
-    try std.testing.expect(ring_buffer.layout.header_size_aligned % ring_buffer.layout.page_size == 0);
-    try std.testing.expect(ring_buffer.layout.actual_element_count >= element_count);
-
-    // Test the buffer with a simple pattern
-    const buffer: []element_type = @ptrCast(
-        @as(
-            [*]element_type,
-            @ptrCast(@alignCast(ring_buffer.combined_buffer.ptr)),
-        )[0..(ring_buffer.layout.actual_element_count * 2)],
-    );
-
-    // Write a pattern
-    for (0..10) |i| {
-        buffer[i] = @intCast(i);
-    }
-
-    // Verify the pattern
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 },
-        buffer[0..10],
-    );
 }
 
 const winZig = @import("zigwin32").zig;
@@ -2527,482 +2236,6 @@ const RingBufferHeader = struct {
     resolution: f64,
     num_channels: f32,
 };
-
-// Basic creation and functionality test
-test "windows ring buffer - basic creation" {
-    if (@import("builtin").os.tag != .windows) {
-        return error.SkipZigTest;
-    }
-
-    std.debug.print("\nring buffer - basic creation\n", .{});
-
-    // Define our test parameters
-    const buffer_name = "test_basic_buffer";
-    const element_type = u64;
-    const element_size = @sizeOf(element_type);
-    const element_count: usize = 1000;
-    const header_size = @sizeOf(RingBufferHeader);
-
-    // Create the ring buffer
-    var ring_buffer = try windowsCreateRingBufferWithHeader(
-        buffer_name,
-        element_size,
-        element_count,
-        header_size,
-    );
-    defer windowsCloseRingBuffer(&ring_buffer) catch {};
-
-    // Verify the layout is calculated correctly
-    try std.testing.expectEqual(@sizeOf(RingBufferHeader), ring_buffer.layout.header_size_raw);
-    try std.testing.expectEqual(element_size * element_count, ring_buffer.layout.buffer_size_raw);
-    try std.testing.expect(ring_buffer.layout.actual_element_count >= element_count);
-
-    // Initialize the header with test values
-    const header: *RingBufferHeader = @ptrCast(@alignCast(ring_buffer.header.ptr));
-    header.tail = 0;
-    header.head = 0;
-    header.count = 0;
-    header.resolution = 44100.0;
-    header.num_channels = 2.0;
-
-    // Verify header values are set correctly
-    try std.testing.expectEqual(@as(u64, 0), header.tail);
-    try std.testing.expectEqual(@as(u64, 0), header.head);
-    try std.testing.expectEqual(@as(u64, 0), header.count);
-    try std.testing.expectEqual(@as(f64, 44100.0), header.resolution);
-    try std.testing.expectEqual(@as(f32, 2.0), header.num_channels);
-}
-
-// Test basic buffer writing and reading
-test "windows ring buffer - basic writes" {
-    if (@import("builtin").os.tag != .windows) {
-        return error.SkipZigTest;
-    }
-    std.debug.print("\nring buffer - basic writes\n", .{});
-
-    // Define our test parameters
-    const buffer_name = "Global\\test_basic_writes";
-    const element_type = u64;
-    const element_size = @sizeOf(element_type);
-    const element_count: usize = 1000;
-    const header_size = @sizeOf(RingBufferHeader);
-
-    // Create the ring buffer
-    var ring_buffer = try windowsCreateRingBufferWithHeader(
-        buffer_name,
-        element_size,
-        element_count,
-        header_size,
-    );
-    defer windowsCloseRingBuffer(&ring_buffer) catch {};
-
-    // Get typed slices for the buffer
-    const buffer: []element_type = @ptrCast(
-        @as(
-            [*]element_type,
-            @ptrCast(@alignCast(ring_buffer.buffer.ptr)),
-        )[0..ring_buffer.layout.actual_element_count],
-    );
-
-    // Test writing sequential values at the beginning of the buffer
-    for (0..10) |i| {
-        buffer[i] = @intCast(i);
-    }
-
-    // Verify the values were written correctly using slice comparison
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 },
-        buffer[0..10],
-    );
-
-    // Test writing at the end of the buffer
-    const end_start = ring_buffer.layout.actual_element_count - 5;
-    for (0..5) |i| {
-        buffer[end_start + i] = @intCast(end_start + i);
-    }
-
-    // Verify sequential values at the end of the buffer
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ end_start, end_start + 1, end_start + 2, end_start + 3, end_start + 4 },
-        buffer[end_start..(end_start + 5)],
-    );
-}
-
-// Test wrap-around functionality
-test "windows ring buffer - wrap-around" {
-    if (@import("builtin").os.tag != .windows) {
-        return error.SkipZigTest;
-    }
-    std.debug.print("\nring buffer - wrap-around\n", .{});
-
-    // Define our test parameters
-    const buffer_name = "Global\\test_wrap_around";
-    const element_type = u64;
-    const element_size = @sizeOf(element_type);
-    const element_count: usize = 1000;
-    const header_size = @sizeOf(RingBufferHeader);
-
-    // Create the ring buffer
-    var ring_buffer = try windowsCreateRingBufferWithHeader(
-        buffer_name,
-        element_size,
-        element_count,
-        header_size,
-    );
-    defer windowsCloseRingBuffer(&ring_buffer) catch {};
-
-    // Create typed slices for access
-    const buffer: []element_type = @ptrCast(
-        @as(
-            [*]element_type,
-            @ptrCast(@alignCast(ring_buffer.combined_buffer.ptr)),
-        )[0..(ring_buffer.layout.actual_element_count * 2)],
-    );
-
-    const primary_buffer: []element_type = @ptrCast(
-        @as(
-            [*]element_type,
-            @ptrCast(@alignCast(ring_buffer.buffer.ptr)),
-        )[0..ring_buffer.layout.actual_element_count],
-    );
-
-    const secondary_buffer: []element_type = @ptrCast(
-        @as(
-            [*]element_type,
-            @ptrCast(@alignCast(ring_buffer.secondary_view.ptr)),
-        )[0..ring_buffer.layout.actual_element_count],
-    );
-
-    // Define a small pattern that makes the wraparound obvious
-    const pattern_start = ring_buffer.layout.actual_element_count - 4;
-
-    // Clear the relevant portion of the buffer
-    for (0..8) |i| {
-        if (i < 4) {
-            buffer[pattern_start + i] = 0;
-        }
-        if (i < 4) {
-            buffer[ring_buffer.layout.actual_element_count + i] = 0;
-        }
-    }
-
-    // Write data at the end of the buffer
-    buffer[pattern_start + 0] = 1020;
-    buffer[pattern_start + 1] = 1021;
-    buffer[pattern_start + 2] = 1022;
-    buffer[pattern_start + 3] = 1023;
-
-    // Write data at the start of the wraparound region
-    buffer[ring_buffer.layout.actual_element_count + 0] = 0;
-    buffer[ring_buffer.layout.actual_element_count + 1] = 1;
-    buffer[ring_buffer.layout.actual_element_count + 2] = 2;
-    buffer[ring_buffer.layout.actual_element_count + 3] = 3;
-
-    // Verify the pattern at the end of the buffer
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ 1020, 1021, 1022, 1023 },
-        primary_buffer[pattern_start..(pattern_start + 4)],
-    );
-
-    // Verify the pattern at the start of the secondary view
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ 0, 1, 2, 3 },
-        secondary_buffer[0..4],
-    );
-
-    // The key test - verify we can read across the boundary with combined view
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ 1020, 1021, 1022, 1023, 0, 1, 2, 3 },
-        buffer[pattern_start..(pattern_start + 8)],
-    );
-}
-
-// Test mirroring between primary and secondary views
-test "windows ring buffer - mirroring" {
-    if (@import("builtin").os.tag != .windows) {
-        return error.SkipZigTest;
-    }
-    std.debug.print("\nring buffer - mirroring\n", .{});
-
-    // Define our test parameters
-    const buffer_name = "Global\\test_mirroring";
-    const element_type = u64;
-    const element_size = @sizeOf(element_type);
-    const element_count: usize = 1000;
-    const header_size = @sizeOf(RingBufferHeader);
-
-    // Create the ring buffer
-    var ring_buffer = try windowsCreateRingBufferWithHeader(
-        buffer_name,
-        element_size,
-        element_count,
-        header_size,
-    );
-    defer windowsCloseRingBuffer(&ring_buffer) catch {};
-
-    // Create typed slices for access
-    const primary_buffer: []element_type = @ptrCast(
-        @as(
-            [*]element_type,
-            @ptrCast(@alignCast(ring_buffer.buffer.ptr)),
-        )[0..ring_buffer.layout.actual_element_count],
-    );
-
-    const secondary_buffer: []element_type = @ptrCast(
-        @as(
-            [*]element_type,
-            @ptrCast(@alignCast(ring_buffer.secondary_view.ptr)),
-        )[0..ring_buffer.layout.actual_element_count],
-    );
-
-    // First clear the beginning of buffers
-    for (0..5) |i| {
-        primary_buffer[i] = 0;
-        secondary_buffer[i] = 0;
-    }
-
-    // Write values at the start of secondary view
-    for (0..5) |i| {
-        secondary_buffer[i] = @intCast(i + 100);
-    }
-
-    // Verify that changes to secondary view are reflected in primary buffer
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ 100, 101, 102, 103, 104 },
-        primary_buffer[0..5],
-    );
-
-    // Test in reverse: modify primary and check secondary
-    for (0..5) |i| {
-        primary_buffer[i] = @intCast(i + 200);
-    }
-
-    // Verify secondary view reflects the primary changes
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ 200, 201, 202, 203, 204 },
-        secondary_buffer[0..5],
-    );
-}
-
-// Test opening an existing buffer with bidirectional sharing verification
-test "windows ring buffer - open existing and modify bidirectionally" {
-    if (@import("builtin").os.tag != .windows) {
-        return error.SkipZigTest;
-    }
-    std.debug.print("\nring buffer - open existing and bidirectional test\n", .{});
-
-    // Define our test parameters
-    const buffer_name = "Global\\test_open_existing";
-    const element_type = u64;
-    const element_size = @sizeOf(element_type);
-    const element_count: usize = 1000;
-    const header_size = @sizeOf(RingBufferHeader);
-
-    // Create the ring buffer
-    var ring_buffer = try windowsCreateRingBufferWithHeader(
-        buffer_name,
-        element_size,
-        element_count,
-        header_size,
-    );
-    defer windowsCloseRingBuffer(&ring_buffer) catch {};
-
-    // Initialize the header with test values
-    const header: *RingBufferHeader = @ptrCast(@alignCast(ring_buffer.header.ptr));
-    header.tail = 42;
-    header.head = 20;
-    header.count = 22;
-    header.resolution = 44100.0;
-    header.num_channels = 2.0;
-
-    // Write a pattern to the buffer
-    const buffer: []element_type = @ptrCast(
-        @as(
-            [*]element_type,
-            @ptrCast(@alignCast(ring_buffer.combined_buffer.ptr)),
-        )[0..(ring_buffer.layout.actual_element_count * 2)],
-    );
-
-    // Write a simple pattern
-    for (0..10) |i| {
-        buffer[i] = @intCast(i * 100);
-    }
-
-    // Try to open the buffer
-    var opened_buffer = try windowsOpenRingBuffer(
-        buffer_name,
-        element_size,
-        element_count,
-        header_size,
-    );
-    defer windowsCloseRingBuffer(&opened_buffer) catch {};
-
-    // Get typed slices for the opened buffer
-    const opened_header: *RingBufferHeader = @ptrCast(@alignCast(opened_buffer.header.ptr));
-    const opened_buffer_typed: []element_type = @ptrCast(
-        @as(
-            [*]element_type,
-            @ptrCast(@alignCast(opened_buffer.buffer.ptr)),
-        )[0..opened_buffer.layout.actual_element_count],
-    );
-
-    // Verify that the header values were preserved
-    try std.testing.expectEqual(@as(u64, 42), opened_header.tail);
-    try std.testing.expectEqual(@as(u64, 20), opened_header.head);
-    try std.testing.expectEqual(@as(u64, 22), opened_header.count);
-    try std.testing.expectEqual(@as(f64, 44100.0), opened_header.resolution);
-    try std.testing.expectEqual(@as(f32, 2.0), opened_header.num_channels);
-
-    // Verify the buffer data is still there
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ 0, 100, 200, 300, 400, 500, 600, 700, 800, 900 },
-        opened_buffer_typed[0..10],
-    );
-
-    // PHASE 1: Test modifying through second handle
-    std.debug.print("Testing modifications through second handle...\n", .{});
-
-    // Test bidirectional sharing between handles - modify through the second handle
-    opened_buffer_typed[5] = 12345;
-
-    // Verify the change is visible through the original handle
-    try std.testing.expectEqual(@as(element_type, 12345), buffer[5]);
-    std.debug.print("  Second handle changed buffer[5] to {d}, original handle sees: {d}\n", .{ opened_buffer_typed[5], buffer[5] });
-
-    // Also test header bidirectional sharing
-    opened_header.tail = 100;
-    opened_header.head = 50;
-
-    // Verify header changes are visible through original handle
-    try std.testing.expectEqual(@as(u64, 100), header.tail);
-    try std.testing.expectEqual(@as(u64, 50), header.head);
-    std.debug.print(
-        "  Second handle changed header values to {d}/{d}, original handle sees: {d}/{d}\n",
-        .{ opened_header.tail, opened_header.head, header.tail, header.head },
-    );
-
-    // PHASE 2: Test modifying through original handle
-    std.debug.print("Testing modifications through original handle...\n", .{});
-
-    // Modify through original handle
-    buffer[7] = 54321;
-    header.count = 50;
-
-    // Verify changes are visible through second handle
-    try std.testing.expectEqual(@as(element_type, 54321), opened_buffer_typed[7]);
-    try std.testing.expectEqual(@as(u64, 50), opened_header.count);
-    std.debug.print(
-        "  Original handle changed buffer[7] to {d}, second handle sees: {d}\n",
-        .{ buffer[7], opened_buffer_typed[7] },
-    );
-    std.debug.print(
-        "  Original handle changed header.count to {d}, second handle sees: {d}\n",
-        .{ header.count, opened_header.count },
-    );
-
-    // PHASE 3: Test wraparound access through both handles
-    std.debug.print("Testing wraparound access through both handles...\n", .{});
-
-    // Create a combined view for the second handle too
-    const opened_combined: []element_type = @ptrCast(
-        @as(
-            [*]element_type,
-            @ptrCast(@alignCast(opened_buffer.combined_buffer.ptr)),
-        )[0..(opened_buffer.layout.actual_element_count * 2)],
-    );
-
-    // Write a pattern at the wraparound boundary in original handle
-    const wrap_start = ring_buffer.layout.actual_element_count - 3;
-    buffer[wrap_start + 0] = 9001;
-    buffer[wrap_start + 1] = 9002;
-    buffer[wrap_start + 2] = 9003;
-    buffer[ring_buffer.layout.actual_element_count + 0] = 9004;
-    buffer[ring_buffer.layout.actual_element_count + 1] = 9005;
-
-    // Verify the pattern is visible in the second handle
-    // First check the end of the buffer and start of mirror separately
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ 9001, 9002, 9003 },
-        opened_buffer_typed[wrap_start..(wrap_start + 3)],
-    );
-
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ 9004, 9005 },
-        opened_buffer_typed[0..2],
-    );
-
-    // Now check combined continuous access
-    try std.testing.expectEqualSlices(
-        element_type,
-        &[_]element_type{ 9001, 9002, 9003, 9004, 9005 },
-        opened_combined[wrap_start..(wrap_start + 5)],
-    );
-
-    std.debug.print("  Wraparound pattern visible through second handle\n", .{});
-
-    // Modify through the second handle, crossing the boundary
-    opened_combined[wrap_start + 1] = 8002;
-    opened_combined[wrap_start + 3] = 8004; // This is past the buffer end
-
-    // Verify the changes are visible in the original handle
-    try std.testing.expectEqual(@as(element_type, 8002), buffer[wrap_start + 1]);
-    try std.testing.expectEqual(
-        @as(element_type, 8004),
-        buffer[ring_buffer.layout.actual_element_count + 0],
-    );
-
-    std.debug.print(
-        "  Successfully modified and accessed across wraparound boundary between handles\n",
-        .{},
-    );
-}
-
-// Test checking if a buffer exists
-test "windows ring buffer - check exists" {
-    if (@import("builtin").os.tag != .windows) {
-        return error.SkipZigTest;
-    }
-
-    std.debug.print("\nring buffer - check exists\n", .{});
-
-    // Define our test parameters
-    const buffer_name = "Global\\test_exists_check";
-    const element_type = u64;
-    const element_size = @sizeOf(element_type);
-    const element_count: usize = 10;
-    const header_size = @sizeOf(RingBufferHeader);
-
-    // Check that it doesn't exist yet
-    const exists_before = try windowsRingBufferExists(buffer_name);
-    try std.testing.expect(!exists_before);
-
-    // Create the buffer
-    var ring_buffer = try windowsCreateRingBufferWithHeader(
-        buffer_name,
-        element_size,
-        element_count,
-        header_size,
-    );
-    defer windowsCloseRingBuffer(&ring_buffer) catch {};
-
-    // Now check that it exists
-    const exists_after = try windowsRingBufferExists(buffer_name);
-    try std.testing.expect(exists_after);
-
-    // Check a non-existent buffer
-    const non_exists = try windowsRingBufferExists("non_existing_buffer");
-    try std.testing.expect(!non_exists);
-}
 
 // Test large header with small buffer
 test "ring buffer - large header small buffer" {
