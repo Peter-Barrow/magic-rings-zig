@@ -594,29 +594,6 @@ test StructOfArraysFromStruct {
     _ = target;
 }
 
-// pub fn MultiMagicRingWithHeader(comptime T: type, comptime H: type) type {
-//     const info_elem = @typeInfo(T);
-//     _ = switch (info_elem) {
-//         .@"struct" => true,
-//         else => @compileError("T " ++ @typeName(T) ++ " must be a struct\n"),
-//     };
-//
-//     return struct {
-//         const Self = @This();
-//         const Header = State.withFields(H);
-//         const FieldSizes = 0;
-//         const HeaderSize = @sizeOf(Header);
-//
-//         allocator: ?std.mem.Allocator = null,
-//
-//         name: []const u8,
-//
-//         buffer_info: RingBufferInfo,
-//
-//         header: *Header,
-//     };
-// }
-
 /// RingBufferLayout calculates and stores the memory layout for a ring buffer.
 /// It handles platform-specific alignment requirements for Windows and POSIX.
 ///
@@ -754,7 +731,7 @@ pub const RingBufferLayout = struct {
 /// Platform-specific function to get memory allocation granularity.
 /// On Windows, this returns the system allocation granularity (typically 64KB).
 /// On POSIX systems, this returns the page size.
-fn getAllocationGranularity() usize {
+pub fn getAllocationGranularity() usize {
     if (tag == .windows) {
         // On Windows, try to get actual allocation granularity using Windows API
         // Only include the Windows-specific import and code when on Windows
@@ -1359,7 +1336,6 @@ test "mirroring" {
 }
 
 test "open existing and modify bidirectionally" {
-
     if (@import("builtin").link_libc == false) {
         std.debug.print("memfd implementation produces immutable view, skipping...\n", .{});
         if (tag == .linux) return error.SkipZigTest;

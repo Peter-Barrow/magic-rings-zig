@@ -29,7 +29,8 @@ pub fn build(b: *std.Build) void {
 
     const lib_unit_tests = b.addTest(
         .{
-            .root_source_file = b.path("src/magic_ring.zig"),
+            // .root_source_file = b.path("src/magic_ring.zig"),
+            .root_source_file = b.path("src/multi_magic_rings.zig"),
             .target = target,
             .optimize = optimize,
             .link_libc = use_shm_funcs,
@@ -49,7 +50,8 @@ pub fn build(b: *std.Build) void {
 
     const unit_test_check = b.addTest(
         .{
-            .root_source_file = b.path("src/magic_ring.zig"),
+            // .root_source_file = b.path("src/magic_ring.zig"),
+            .root_source_file = b.path("src/multi_magic_rings.zig"),
             .target = target,
             .optimize = optimize,
         },
