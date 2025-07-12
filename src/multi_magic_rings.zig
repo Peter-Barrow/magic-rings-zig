@@ -4,13 +4,21 @@ const State = @import("magic_ring.zig").State;
 const RingBufferLayout = @import("magic_ring.zig").RingBufferLayout;
 const getAllocationGranularity = @import("magic_ring.zig").getAllocationGranularity;
 
+/// Represents an allocation strategy for a single field in a multi-field ring buffer.
+/// This struct contains the calculated memory requirements and allocation parameters
+/// needed to efficiently allocate memory for a specific field type.
 const AllocationStrategy = struct {
+    /// The type of the field this strategy applies to
     field_type: type,
+    /// The number of elements that will be allocated for this field
     element_count: usize,
+    /// The total number of bytes required for this field's allocation
     bytes: usize,
+    /// The number of memory pages required for this field's allocation
     pages: usize,
 };
 
+/// Calculates the least common multiple (LCM) of multiple numbers.
 fn lcm_of_many(numbers: []usize) usize {
     return switch (numbers.len) {
         1 => numbers[0],
@@ -27,6 +35,30 @@ fn lcm_of_many(numbers: []usize) usize {
     };
 }
 
+/// Calculates memory allocation strategies for each field in a multi-field ring buffer.
+/// 
+/// This function determines the optimal memory allocation parameters for each field type
+/// in a struct-based ring buffer, ensuring proper memory alignment and efficient usage
+/// based on the system's allocation granularity.
+///
+/// 1. Computing allocation ratios for each field type based on granularity alignment
+/// 2. Finding the least common multiple (LCM) of all ratios to determine minimum elements
+/// 3. Scaling up the allocation if more elements are requested than the minimum
+/// 4. Returning allocation strategies with calculated bytes, pages, and element counts
+///
+/// Parameters:
+///   - T: The struct type containing the fields to allocate for
+///   - requested_elements: The minimum number of elements requested for allocation
+///
+/// Returns:
+///   An array of AllocationStrategy structs, one for each field in the input struct,
+///   containing the calculated memory requirements and allocation parameters.
+///
+/// The returned strategies ensure that:
+/// - All field allocations are properly aligned to system granularity
+/// - Memory usage is optimized by using the LCM of field size ratios
+/// - The actual element count meets or exceeds the requested count
+/// - Each field gets the same logical element count for consistent indexing
 fn allocationStrategy(
     comptime T: type,
     requested_elements: usize,
@@ -111,15 +143,30 @@ test allocationStrategy {
     }
 }
 
+/// Creates a multi-field ring buffer type that manages separate ring buffers for each field of a struct.
+///
+/// Parameters:
+///   - T: The struct type whose fields will become separate ring buffers.
+///        Each field in this struct will get its own ring buffer of the corresponding type.
+///   - H: The header type to use for each ring buffer's metadata.
+///        This type is passed to MagicRingWithHeader for each field.
+///
+/// Returns:
+///   A type that provides a multi-field ring buffer interface with methods for:
+///   - Creating and opening ring buffer sets
+///   - Pushing data to all fields simultaneously or individual fields
+///   - Slicing data from all fields or individual fields
+///   - Accessing individual field values at specific indices
+///
+/// Example usage:
+///   ```zig
+///   const Point = struct { x: f64, y: f64, timestamp: u64 };
+///   const MultiRing = MultiMagicRing(Point, struct {});
+///   var ring = try MultiRing.create("points", 1000, allocator);
+///   _ = ring.push(Point{ .x = 1.0, .y = 2.0, .timestamp = 12345 });
+///   ```
 pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
-    // const info = @typeInfo(T);
-    // // TODO: should include enums
-    // if (info != .@"struct") @compileError("must be a struct");
-    // const fields = switch (info) {
-    //     .@"struct" => |s| s.fields,
-    //     else => @compileError("Must be a struct"),
-    // };
-
+    
     const info = switch (@typeInfo(T)) {
         .@"struct" => |info| info,
         else => @compileError("Must be a struct"),
@@ -135,6 +182,11 @@ pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
             return []@FieldType(T, @tagName(field));
         }
 
+        /// Converts a struct to its struct-of-arrays representation:
+        /// S := {a: u8, b: f32} -> S := {a: []u8, b: []f32}
+        /// Each field becomes a slice of its corresponding type, allowing for efficient
+        /// batch operations on columnar data. Used by slice operations to return
+        /// synchronized views across all field ring buffers.
         const Slice = blk: {
             var fields: [info.fields.len]std.builtin.Type.StructField = undefined;
             for (info.fields, &fields) |f, *field| {
@@ -156,6 +208,10 @@ pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
             });
         };
 
+        /// Hold the push result (index) for each field in the original struct.
+        /// Each field becomes a u64 representing the index where data was pushed in the corresponding
+        /// ring buffer. Used by push operations to return synchronized push results across all
+        /// field ring buffers.
         const Pushed = blk: {
             var fields: [info.fields.len]std.builtin.Type.StructField = undefined;
             for (info.fields, &fields) |f, *field| {
@@ -177,7 +233,9 @@ pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
             });
         };
 
-        // Create magic rings for each field
+        /// Converts a type 'T', a struct with fields, to a 'Struct-of-Rings' formulism.
+        /// Each field becomes a MagicRingWithHeader of its corresponding type, providing individual
+        /// ring buffer management for each field while maintaining type safety and unified operations.
         const RingBuffers = blk: {
             var fields: [info.fields.len]std.builtin.Type.StructField = undefined;
             for (info.fields, &fields) |ifield, *field| {
