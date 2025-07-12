@@ -19,6 +19,21 @@ const AllocationStrategy = struct {
 };
 
 /// Calculates the least common multiple (LCM) of multiple numbers.
+///
+/// This function computes the LCM of an array of numbers, which is essential
+/// for determining the minimum number of elements needed to ensure all field
+/// allocations align properly with system memory granularity requirements.
+///
+/// Parameters:
+/// - numbers: Slice of numbers to compute the LCM for
+///
+/// Returns:
+/// - The least common multiple of all input numbers
+///
+/// The algorithm handles different array lengths efficiently:
+/// - Single number: returns the number itself
+/// - Two numbers: uses built-in LCM function
+/// - Multiple numbers: iteratively computes LCM while tracking the minimum
 fn lcm_of_many(numbers: []usize) usize {
     return switch (numbers.len) {
         1 => numbers[0],
@@ -110,6 +125,20 @@ fn allocationStrategy(
     return &strategies;
 }
 
+/// Finds the allocation strategy for a specific type from an array of strategies.
+///
+/// This is a compile-time function that searches through the provided allocation
+/// strategies to find the one that matches the requested type.
+///
+/// Parameters:
+/// - T: The type to search for in the strategies
+/// - strategies: Array of AllocationStrategy structs to search through
+///
+/// Returns:
+/// - The AllocationStrategy struct for the specified type
+///
+/// Errors:
+/// - Compile error if the type is not found in the strategies array
 fn strategyForType(comptime T: type, strategies: []AllocationStrategy) AllocationStrategy {
     inline for (strategies) |strat| {
         if (strat.field_type == T) return strat;
@@ -263,6 +292,30 @@ pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
 
         name: []const u8,
 
+        /// Creates a new multi-field ring buffer with the specified parameters.
+        ///
+        /// This function creates separate ring buffers for each field in the struct type T,
+        /// with each ring buffer optimally sized based on memory allocation strategies.
+        /// All ring buffers share the same logical element count for synchronized access.
+        ///
+        /// Parameters:
+        /// - name: Base name for the ring buffer set (individual buffers get field suffixes)
+        /// - length: Requested number of elements (actual size may be larger due to alignment)
+        /// - allocator: Optional allocator for memory management operations
+        ///
+        /// Returns:
+        /// - A new MultiMagicRing instance with all field buffers created and ready for use
+        ///
+        /// Errors:
+        /// - error.SharedMemoryExists: If any field buffer with the computed name already exists
+        /// - Various platform-specific errors from underlying ring buffer creation
+        ///
+        /// Example:
+        /// ```zig
+        /// const Point = struct { x: f64, y: f64 };
+        /// const MultiRing = MultiMagicRing(Point, struct {});
+        /// var ring = try MultiRing.create("points", 1000, allocator);
+        /// ```
         pub fn create(name: []const u8, length: usize, allocator: ?std.mem.Allocator) !Self {
             var buffers: RingBuffers = .{};
             const strategies = allocationStrategy(T, length);
@@ -293,6 +346,28 @@ pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
             };
         }
 
+        /// Opens an existing multi-field ring buffer set.
+        ///
+        /// This function opens all the individual ring buffers that were previously created
+        /// as part of a multi-field ring buffer set. The ring buffers must have been created
+        /// with the same struct type and base name.
+        ///
+        /// Parameters:
+        /// - name: Base name of the ring buffer set to open (matches name used in create)
+        /// - allocator: Optional allocator for memory management operations
+        ///
+        /// Returns:
+        /// - A MultiMagicRing instance connected to the existing ring buffer set
+        ///
+        /// Errors:
+        /// - error.SharedMemoryDoesNotExist: If any required field buffer doesn't exist
+        /// - Various platform-specific errors from underlying ring buffer opening
+        ///
+        /// Example:
+        /// ```zig
+        /// var ring = try MultiRing.open("points", allocator);
+        /// defer ring.close() catch {};
+        /// ```
         pub fn open(name: []const u8, allocator: ?std.mem.Allocator) !Self {
             var buffers: RingBuffers = .{};
 
@@ -318,12 +393,45 @@ pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
             };
         }
 
+        /// Closes the multi-field ring buffer and cleans up all resources.
+        ///
+        /// This function closes all individual field ring buffers and releases their
+        /// associated shared memory resources. After calling this function, the
+        /// MultiMagicRing instance should not be used.
+        ///
+        /// Parameters:
+        /// - self: Pointer to the MultiMagicRing instance to close
+        ///
+        /// Errors:
+        /// - Platform-specific errors during resource cleanup from any field buffer
+        ///
+        /// Note: This function attempts to close all field buffers even if some fail,
+        /// but will return the first error encountered.
         pub fn close(self: *Self) !void {
             inline for (info.fields) |field| {
                 @field(self.rings, field.name).close();
             }
         }
 
+        /// Gets a slice of data from a specific field's ring buffer.
+        ///
+        /// This function provides access to a contiguous range of elements from one
+        /// field's ring buffer, taking advantage of the magic ring buffer's seamless
+        /// wraparound capability.
+        ///
+        /// Parameters:
+        /// - self: Pointer to the MultiMagicRing instance
+        /// - field: The field enum specifying which field buffer to slice from
+        /// - start: Starting logical position (inclusive)
+        /// - stop: Ending logical position (exclusive)
+        ///
+        /// Returns:
+        /// - A slice containing the requested range of elements from the specified field
+        ///
+        /// Example:
+        /// ```zig
+        /// const x_values = ring.sliceField(.x, 10, 20); // Get x[10..20]
+        /// ```
         pub fn sliceField(
             self: *Self,
             field: Fields,
@@ -333,26 +441,133 @@ pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
             return @field(self.rings, field).slice(start, stop);
         }
 
+        /// Gets a slice of the oldest elements from a specific field's ring buffer.
+        ///
+        /// This function returns the oldest elements still in the ring buffer for the
+        /// specified field, starting from the tail position.
+        ///
+        /// Parameters:
+        /// - self: Pointer to the MultiMagicRing instance
+        /// - field: The field enum specifying which field buffer to slice from
+        /// - count: Number of oldest elements to include in the slice
+        ///
+        /// Returns:
+        /// - A slice containing the oldest elements from the specified field
+        ///
+        /// Example:
+        /// ```zig
+        /// const oldest_y = ring.sliceFieldFromTail(.y, 5); // Get 5 oldest y values
+        /// ```
         pub fn sliceFieldFromTail(self: *Self, field: Fields, count: u64) FieldSlice(field) {
             return @field(self.rings, @tagName(field)).sliceFromTail(count);
         }
 
+        /// Gets a slice of the newest elements from a specific field's ring buffer.
+        ///
+        /// This function returns the newest elements in the ring buffer for the
+        /// specified field, ending at the head position.
+        ///
+        /// Parameters:
+        /// - self: Pointer to the MultiMagicRing instance
+        /// - field: The field enum specifying which field buffer to slice from
+        /// - count: Number of newest elements to include in the slice
+        ///
+        /// Returns:
+        /// - A slice containing the newest elements from the specified field
+        ///
+        /// Example:
+        /// ```zig
+        /// const latest_x = ring.sliceFieldToHead(.x, 3); // Get 3 newest x values
+        /// ```
         pub fn sliceFieldToHead(self: *Self, field: Fields, count: u64) FieldSlice(field) {
             return @field(self.rings, @tagName(field)).sliceToHead(count);
         }
 
+        /// Gets the value at a specific logical index from a field's ring buffer.
+        ///
+        /// This function retrieves a single element from the specified field's ring buffer
+        /// at the given logical index, where index 0 represents the oldest element still
+        /// in the buffer.
+        ///
+        /// Parameters:
+        /// - self: Pointer to the MultiMagicRing instance
+        /// - field: The field enum specifying which field buffer to access
+        /// - index: Logical index relative to the tail (0 = oldest element)
+        ///
+        /// Returns:
+        /// - The value at the specified index in the field's ring buffer
+        ///
+        /// Example:
+        /// ```zig
+        /// const x_val = ring.valueAtInField(.x, 5); // Get the 6th oldest x value
+        /// ```
         pub fn valueAtInField(self: *Self, field: Fields, index: u64) @FieldType(T, @tagName(field)) {
             return @field(self.rings, @tagName(field)).valueAt(index);
         }
 
+        /// Pushes a single value to a specific field's ring buffer.
+        ///
+        /// This function adds one element to the specified field's ring buffer.
+        /// When the buffer is full, this will overwrite the oldest element in that field.
+        ///
+        /// Parameters:
+        /// - self: Pointer to the MultiMagicRing instance
+        /// - field: The field enum specifying which field buffer to push to
+        /// - value: The value to push to the specified field's buffer
+        ///
+        /// Returns:
+        /// - The new cumulative count of elements pushed to that field's buffer
+        ///
+        /// Example:
+        /// ```zig
+        /// _ = ring.pushField(.x, 3.14);
+        /// _ = ring.pushField(.y, 2.71);
+        /// ```
         pub fn pushField(self: *Self, field: Fields, value: @FieldType(T, @tagName(field))) u64 {
             return @field(self.rings, @tagName(field)).push(value);
         }
 
+        /// Pushes multiple values to a specific field's ring buffer.
+        ///
+        /// This function adds multiple elements to the specified field's ring buffer
+        /// in a single operation, which is more efficient than multiple individual pushes.
+        ///
+        /// Parameters:
+        /// - self: Pointer to the MultiMagicRing instance
+        /// - field: The field enum specifying which field buffer to push to
+        /// - values: Slice of values to push to the specified field's buffer
+        ///
+        /// Returns:
+        /// - The new cumulative count of elements pushed to that field's buffer
+        ///
+        /// Example:
+        /// ```zig
+        /// const x_values = [_]f64{ 1.0, 2.0, 3.0 };
+        /// _ = ring.pushValuesField(.x, &x_values);
+        /// ```
         pub fn pushValuesField(self: *Self, field: Fields, values: []@FieldType(T, @tagName(field))) u64 {
             return @field(self.rings, @tagName(field)).pushValues(values);
         }
 
+        /// Gets synchronized slices from all field ring buffers for a specific range.
+        ///
+        /// This function returns a struct-of-arrays view where each field becomes a slice
+        /// containing the specified range of elements from that field's ring buffer.
+        /// All slices represent the same logical time range across all fields.
+        ///
+        /// Parameters:
+        /// - self: Pointer to the MultiMagicRing instance
+        /// - start: Starting logical position (inclusive)
+        /// - stop: Ending logical position (exclusive)
+        ///
+        /// Returns:
+        /// - A Slice struct with synchronized slices from all field buffers
+        ///
+        /// Example:
+        /// ```zig
+        /// const data = ring.slice(10, 20);
+        /// // data.x contains x[10..20], data.y contains y[10..20], etc.
+        /// ```
         pub fn slice(self: *Self, start: usize, stop: usize) Slice {
             var result: Slice = undefined;
 
@@ -362,6 +577,24 @@ pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
             return result;
         }
 
+        /// Gets synchronized slices of the oldest elements from all field ring buffers.
+        ///
+        /// This function returns a struct-of-arrays view where each field becomes a slice
+        /// containing the oldest elements from that field's ring buffer. All slices
+        /// represent the same logical time period across all fields.
+        ///
+        /// Parameters:
+        /// - self: Pointer to the MultiMagicRing instance
+        /// - count: Number of oldest elements to include in each field's slice
+        ///
+        /// Returns:
+        /// - A Slice struct with synchronized slices of oldest elements from all fields
+        ///
+        /// Example:
+        /// ```zig
+        /// const oldest = ring.sliceFromTail(5);
+        /// // oldest.x contains 5 oldest x values, oldest.y contains 5 oldest y values
+        /// ```
         pub fn sliceFromTail(self: *Self, count: u64) Slice {
             var result: Slice = undefined;
             inline for (info.fields) |field| {
@@ -370,6 +603,24 @@ pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
             return result;
         }
 
+        /// Gets synchronized slices of the newest elements from all field ring buffers.
+        ///
+        /// This function returns a struct-of-arrays view where each field becomes a slice
+        /// containing the newest elements from that field's ring buffer. All slices
+        /// represent the same logical time period across all fields.
+        ///
+        /// Parameters:
+        /// - self: Pointer to the MultiMagicRing instance
+        /// - count: Number of newest elements to include in each field's slice
+        ///
+        /// Returns:
+        /// - A Slice struct with synchronized slices of newest elements from all fields
+        ///
+        /// Example:
+        /// ```zig
+        /// const latest = ring.sliceToHead(3);
+        /// // latest.x contains 3 newest x values, latest.y contains 3 newest y values
+        /// ```
         pub fn sliceToHead(self: *Self, count: u64) Slice {
             var result: Slice = undefined;
             inline for (info.fields) |field| {
@@ -378,6 +629,25 @@ pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
             return result;
         }
 
+        /// Pushes a complete struct instance to all field ring buffers simultaneously.
+        ///
+        /// This function decomposes the input struct and pushes each field value to its
+        /// corresponding ring buffer. This maintains synchronization across all fields,
+        /// ensuring they all have the same logical timeline.
+        ///
+        /// Parameters:
+        /// - self: Pointer to the MultiMagicRing instance
+        /// - value: The struct instance to push (must be of type T)
+        ///
+        /// Returns:
+        /// - A Pushed struct containing the new cumulative count for each field's buffer
+        ///
+        /// Example:
+        /// ```zig
+        /// const point = Point{ .x = 1.5, .y = 2.5, .timestamp = 12345 };
+        /// const indices = ring.push(point);
+        /// // indices.x, indices.y, indices.timestamp contain push counts
+        /// ```
         pub fn push(self: *Self, value: T) Pushed {
             var result: Pushed = undefined;
             inline for (info.fields) |field| {
@@ -386,6 +656,27 @@ pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
             return result;
         }
 
+        /// Pushes multiple complete struct instances to all field ring buffers.
+        ///
+        /// This function takes an array of struct instances and pushes them one by one
+        /// to maintain field synchronization. For better performance with large datasets,
+        /// consider using pushSlice instead.
+        ///
+        /// Parameters:
+        /// - self: Pointer to the MultiMagicRing instance
+        /// - values: Slice of struct instances to push (each must be of type T)
+        ///
+        /// Returns:
+        /// - A Pushed struct containing the final cumulative count for each field's buffer
+        ///
+        /// Example:
+        /// ```zig
+        /// const points = [_]Point{
+        ///     Point{ .x = 1.0, .y = 2.0, .timestamp = 100 },
+        ///     Point{ .x = 1.5, .y = 2.5, .timestamp = 101 },
+        /// };
+        /// const final_indices = ring.pushValues(&points);
+        /// ```
         pub fn pushValues(self: *Self, values: []T) Pushed {
             var result: Pushed = undefined;
             for (values) |v| {
@@ -394,6 +685,28 @@ pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
             return result;
         }
 
+        /// Pushes a struct-of-arrays slice to all field ring buffers efficiently.
+        ///
+        /// This function takes a Slice struct (where each field is an array) and pushes
+        /// the arrays to their corresponding ring buffers using bulk operations. This is
+        /// the most efficient way to push large amounts of structured data.
+        ///
+        /// Parameters:
+        /// - self: Pointer to the MultiMagicRing instance
+        /// - values: A Slice struct containing arrays for each field
+        ///
+        /// Returns:
+        /// - A Pushed struct containing the new cumulative count for each field's buffer
+        ///
+        /// Example:
+        /// ```zig
+        /// const data = Slice{
+        ///     .x = &[_]f64{ 1.0, 2.0, 3.0 },
+        ///     .y = &[_]f64{ 4.0, 5.0, 6.0 },
+        ///     .timestamp = &[_]u64{ 100, 101, 102 },
+        /// };
+        /// const indices = ring.pushSlice(data);
+        /// ```
         pub fn pushSlice(self: *Self, values: Slice) Pushed {
             var result: Pushed = undefined;
             inline for (info.fields) |field| {
