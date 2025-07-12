@@ -187,7 +187,7 @@ const value = ring2.valueAt(0); // 42
 | Platform | Shared Memory | Anonymous Memory |
 |----------|---------------|------------------|
 | Linux    | `shm_open` / `memfd_create` | `memfd_create` |
-| FreeBSD  | `shm_open` | Limited |  
+| FreeBSD  | `shm_open` | `memfd_create` |  
 | Windows  | `CreateFileMapping` | `CreateFileMapping` |
 
 ## API Reference
