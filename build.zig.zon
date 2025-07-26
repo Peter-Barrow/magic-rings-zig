@@ -1,6 +1,6 @@
 .{
     .name = .magic_rings,
-    .version = "0.0.0",
+    .version = "0.1.0",
     .dependencies = .{
         .known_folders = .{
             .url = "git+https://github.com/ziglibs/known-folders.git#aa24df42183ad415d10bc0a33e6238c437fc0f59",
