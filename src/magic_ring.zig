@@ -1,6 +1,12 @@
 const std = @import("std");
 const shared_memory = @import("shared_memory");
 
+const winZig = @import("zigwin32").zig;
+const winFoundation = @import("zigwin32").foundation;
+const winSysInfo = @import("zigwin32").system.system_information;
+const winMem = @import("zigwin32").system.memory;
+const winSec = @import("zigwin32").security;
+
 const tag = @import("builtin").target.os.tag;
 
 pub const State = struct {
@@ -1753,12 +1759,6 @@ fn memfdClose(allocator: std.mem.Allocator, name: []const u8, mapping: *Mapping)
     );
     mapping.* = undefined;
 }
-
-const winZig = @import("zigwin32").zig;
-const winFoundation = @import("zigwin32").foundation;
-const winSysInfo = @import("zigwin32").system.system_information;
-const winMem = @import("zigwin32").system.memory;
-const winSec = @import("zigwin32").security;
 
 const Handle = std.os.windows.HANDLE;
 

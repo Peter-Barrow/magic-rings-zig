@@ -9,7 +9,9 @@ const getAllocationGranularity = @import("magic_ring.zig").getAllocationGranular
 /// needed to efficiently allocate memory for a specific field type.
 const AllocationStrategy = struct {
     /// The type of the field this strategy applies to
-    field_type: type,
+    // field_type: type,
+    field_name: []const u8,
+    // field_size: usize,
     /// The number of elements that will be allocated for this field
     element_count: usize,
     /// The total number of bytes required for this field's allocation
@@ -25,7 +27,7 @@ const AllocationStrategy = struct {
 /// allocations align properly with system memory granularity requirements.
 ///
 /// Parameters:
-/// - numbers: Slice of numbers to compute the LCM for
+/// - numbers: Array of numbers to compute the LCM for
 ///
 /// Returns:
 /// - The least common multiple of all input numbers
@@ -51,7 +53,7 @@ fn lcm_of_many(numbers: []usize) usize {
 }
 
 /// Calculates memory allocation strategies for each field in a multi-field ring buffer.
-/// 
+///
 /// This function determines the optimal memory allocation parameters for each field type
 /// in a struct-based ring buffer, ensuring proper memory alignment and efficient usage
 /// based on the system's allocation granularity.
@@ -77,30 +79,37 @@ fn lcm_of_many(numbers: []usize) usize {
 fn allocationStrategy(
     comptime T: type,
     requested_elements: usize,
-) []AllocationStrategy {
-    const granularity = getAllocationGranularity();
+) [std.meta.fields(T).len]AllocationStrategy {
     const info = @typeInfo(T);
     const fields = info.@"struct".fields;
 
-    var ratios = [_]usize{1} ** fields.len;
-    inline for (fields, &ratios) |field, *ratio| {
-        ratio.* = @divFloor(granularity, std.math.gcd(granularity, @sizeOf(field.type)));
+    comptime var field_sizes = [_]usize{0} ** fields.len;
+    comptime var field_types: [fields.len]type = undefined;
+    inline for (fields, &field_sizes, &field_types) |field, *field_size, *field_type| {
+        field_size.* = @sizeOf(field.type);
+        field_type.* = field.type;
     }
 
+    var strategies: [fields.len]AllocationStrategy = undefined;
+
+    const granularity = getAllocationGranularity();
+    var ratios = [_]usize{1} ** fields.len;
+    for (0.., &ratios) |i, *ratio| {
+        ratio.* = @divFloor(granularity, std.math.gcd(granularity, field_sizes[i]));
+    }
     const min_elements = lcm_of_many(&ratios);
 
-    var strategies: [fields.len]AllocationStrategy = undefined;
-    inline for (fields, &strategies) |field, *strategy| {
-        const total_bytes = @sizeOf(field.type) * min_elements;
+    inline for (&strategies, field_sizes, field_types) |*strategy, field_size, field_type| {
+        const total_bytes = field_size * min_elements;
         strategy.* = .{
-            .field_type = field.type,
+            .field_name = @typeName(field_type),
             .bytes = total_bytes,
             .pages = @divFloor(total_bytes, granularity),
             .element_count = min_elements,
         };
     }
 
-    if (requested_elements <= min_elements) return &strategies;
+    if (requested_elements <= min_elements) return strategies;
 
     const multiplier: usize = @intFromFloat(
         std.math.ceil(
@@ -112,17 +121,13 @@ fn allocationStrategy(
     );
     const actual_elements = multiplier * min_elements;
 
-    inline for (fields, &strategies) |field, *strategy| {
-        const total_bytes = @sizeOf(field.type) * actual_elements;
-        strategy.* = .{
-            .field_type = field.type,
-            .bytes = total_bytes,
-            .pages = @divFloor(total_bytes, granularity),
-            .element_count = min_elements,
-        };
+    inline for (&strategies, field_sizes) |*strategy, field_size| {
+        const total_bytes = field_size * actual_elements;
+        strategy.*.bytes = total_bytes;
+        strategy.*.pages = @divFloor(total_bytes, granularity);
     }
 
-    return &strategies;
+    return strategies;
 }
 
 /// Finds the allocation strategy for a specific type from an array of strategies.
@@ -153,13 +158,15 @@ test allocationStrategy {
         third: u15,
         fourth: struct { x: f64, y: f64 },
     };
-
+    
+    const fields = @typeInfo(test_struct).@"struct".fields;
     const strategies = allocationStrategy(test_struct, 1234);
-    inline for (strategies) |strat| {
+    for (0..fields.len) |i| {
+        const strat = strategies[i];
         std.debug.print(
-            "field - {s}:\n\telements:{d}\n\tbytes:{d}\n\tpages:{d}\n\n",
+            "field - {s}\n\telements:{d}\n\tbytes:{d}\n\tpages:{d}\n\n",
             .{
-                @typeName(strat.field_type),
+                strat.field_name,
                 strat.element_count,
                 strat.bytes,
                 strat.pages,
@@ -167,7 +174,7 @@ test allocationStrategy {
         );
     }
 
-    inline for (strategies[1..], 0..) |strat, i| {
+    for (strategies[1..], 0..) |strat, i| {
         try std.testing.expectEqual(strategies[i].element_count, strat.element_count);
     }
 }
@@ -195,7 +202,6 @@ test allocationStrategy {
 ///   _ = ring.push(Point{ .x = 1.0, .y = 2.0, .timestamp = 12345 });
 ///   ```
 pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
-    
     const info = switch (@typeInfo(T)) {
         .@"struct" => |info| info,
         else => @compileError("Must be a struct"),
@@ -715,7 +721,6 @@ pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
             }
             return result;
         }
-
     };
 }
 
