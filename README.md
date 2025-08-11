@@ -4,7 +4,7 @@
 
 The library supports Linux, FreeBSD (via `memfd_create` or `shm_open`/`shm_unlink`), and Windows platforms with cross-platform shared memory capabilities for inter-process communication, built on top of [shared-memory-zig](https://github.com/Peter-Barrow/shared-memory-zig).
 
-**STATUS: Stable Core with Active Development** - The core functionality is stable and battle-tested, with ongoing development of advanced features. Built and tested with Zig 0.14.0, tracking subsequent releases.
+**STATUS: Stable Core with Active Development** - The core functionality is stable, with ongoing development for new ideas and tracking updates to Zig. Built and tested with Zig 0.15.0-dev, tracking subsequent releases.
 
 ## Key Features
 
