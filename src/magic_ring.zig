@@ -490,7 +490,7 @@ test "Magic Ring Buffer" {
     const tail_slice = ring.sliceFromTail(3);
     try std.testing.expectEqual(3, tail_slice.len);
 
-    std.debug.print("slice:\t{d}\n", .{tail_slice});
+    std.debug.print("slice:\t{any}\n", .{tail_slice});
 
     // Expected oldest values should be: [6, 7, 8]
     try std.testing.expectEqualSlices(u64, &[_]u64{ 6, 7, 8 }, tail_slice);
@@ -499,7 +499,7 @@ test "Magic Ring Buffer" {
     const head_slice = ring.sliceToHead(3);
     try std.testing.expectEqual(3, head_slice.len);
 
-    std.debug.print("head slice:\t{d}\n", .{head_slice});
+    std.debug.print("head slice:\t{any}\n", .{head_slice});
 
     // Expected newest values should be: [5002, 5003, 5004]
     try std.testing.expectEqualSlices(u64, &[_]u64{ 5002, 5003, 5004 }, head_slice);
@@ -2102,7 +2102,7 @@ pub fn windowsCreateRingBufferWithHeader(
     const section_size = layout.header_size_aligned + layout.buffer_size_aligned;
 
     // Create a null-terminated version of the name
-    var buffer = [_]u8{0} ** std.fs.MAX_NAME_BYTES;
+    var buffer = [_]u8{0} ** std.fs.max_name_bytes;
     const name_z = try std.fmt.bufPrintZ(&buffer, "{s}", .{name});
 
     // Create the file mapping object
@@ -2135,7 +2135,7 @@ pub fn windowsOpenRingBuffer(
     const layout = try RingBufferLayout.init(element_size, element_count, header_size);
 
     // Create a null-terminated version of the name
-    var buffer = [_]u8{0} ** std.fs.MAX_NAME_BYTES;
+    var buffer = [_]u8{0} ** std.fs.max_name_bytes;
     const name_z = try std.fmt.bufPrintZ(&buffer, "{s}", .{name});
 
     // Open the existing file mapping object
@@ -2154,7 +2154,7 @@ pub fn windowsOpenRingBuffer(
 /// Returns:
 /// - true if the buffer exists, false otherwise
 pub fn windowsRingBufferExists(name: []const u8) !bool {
-    var buffer: [std.fs.MAX_NAME_BYTES]u8 = undefined;
+    var buffer: [std.fs.max_name_bytes]u8 = undefined;
     const name_z = std.fmt.bufPrintZ(&buffer, "{s}", .{name}) catch unreachable;
 
     const flags_handle: winMem.FILE_MAP = .{ .READ = 1 };

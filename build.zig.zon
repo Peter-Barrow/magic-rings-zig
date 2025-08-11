@@ -3,16 +3,16 @@
     .version = "0.1.0",
     .dependencies = .{
         .known_folders = .{
-            .url = "git+https://github.com/ziglibs/known-folders.git#aa24df42183ad415d10bc0a33e6238c437fc0f59",
-            .hash = "known_folders-0.0.0-Fy-PJtLDAADGDOwYwMkVydMSTp_aN-nfjCZw6qPQ2ECL",
+            .url = "git+https://github.com/ziglibs/known-folders.git#ab5cf5feb936fa3b72c95d3ad0c0c67791937ba1",
+            .hash = "known_folders-0.0.0-Fy-PJtTTAADUOhGKM0sxzG4eMkNQxRvx9e5dfHVyaeA3",
         },
         .zigwin32 = .{
-            .url = "git+https://github.com/marlersoft/zigwin32.git#7b434a47c2b85f395d8e5a6dca47af6a74422521",
-            .hash = "zigwin32-25.0.28-preview-AAAAALqY-wMp_N2rd4U4tD9LAxh0TbUPLKhzx6lngGQK",
+            .url = "git+https://www.github.com/marlersoft/zigwin32.git#d21b419d808215e1f82605fdaddc49750bfa3bca",
+            .hash = "zigwin32-25.0.28-preview-AAAAAI0J-wP-8_KKo4Yjr33XLhVhlJmeagGUedByaOnX",
         },
         .shared_memory = .{
-            .url = "git+https://github.com/Peter-Barrow/shared-memory-zig.git#7dc0f7516f6d498148bf145e7649c2d9c3dddc75",
-            .hash = "shared_memory-0.3.0-5YGFvOTCAABV3DPQIQqsU4xNezk6Aa6VruPEK1nINxuy",
+            .url = "git+https://github.com/Peter-Barrow/shared-memory-zig/?ref=HEAD#6fb17cea5946c716b17666023a4d649fe7d09945",
+            .hash = "shared_memory-0.3.2-5YGFvJrEAADITAvp0mM5eWboTM_j3kQuVrkVpxtakQTy",
         },
     },
     .paths = .{

@@ -27,12 +27,18 @@ pub fn build(b: *std.Build) void {
         "Use shm_open and shm_unlink instead of memfd_create",
     ) orelse false;
 
+    const test_module = b.createModule(
+        .{
+            .optimize = optimize,
+            .target = target,
+            .root_source_file = b.path("src/magicrings.zig"),
+        },
+    );
+
     const lib_unit_tests = b.addTest(
         .{
-            .root_source_file = b.path("src/magicrings.zig"),
-            .target = target,
-            .optimize = optimize,
-            .link_libc = use_shm_funcs,
+            .name = "test",
+            .root_module = test_module,
         },
     );
 
@@ -47,27 +53,30 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
 
-    const unit_test_check = b.addTest(
-        .{
-            .root_source_file = b.path("src/magicrings.zig"),
-            .target = target,
-            .optimize = optimize,
-        },
-    );
+    // const unit_test_check = b.addTest(
+    //     .{
+    //         .name = "test",
+    //         .root_module = b.createModule(.{
+    //             .root_source_file = b.path("src/magicrings.zig"),
+    //             .optimize = optimize,
+    //             .target = target,
+    //         }),
+    //     },
+    // );
 
-    unit_test_check.root_module.addImport("zigwin32", zigwin32);
-    unit_test_check.root_module.addImport("known-folders", known_folders);
-    unit_test_check.root_module.addImport("shared_memory", shared_memory);
+    // unit_test_check.root_module.addImport("zigwin32", zigwin32);
+    // unit_test_check.root_module.addImport("known-folders", known_folders);
+    // unit_test_check.root_module.addImport("shared_memory", shared_memory);
 
-    const check = b.step("check", "Check if tests compiles");
-    check.dependOn(&unit_test_check.step);
+    // const check = b.step("check", "Check if tests compiles");
+    // check.dependOn(&unit_test_check.step);
 
-    const install_docs = b.addInstallDirectory(.{
-        .source_dir = lib_unit_tests.getEmittedDocs(),
-        .install_dir = .prefix,
-        .install_subdir = "docs",
-    });
+    // const install_docs = b.addInstallDirectory(.{
+    //     .source_dir = lib_unit_tests.getEmittedDocs(),
+    //     .install_dir = .prefix,
+    //     .install_subdir = "docs",
+    // });
 
-    const docs_step = b.step("docs", "Install docs into zig-out/docs");
-    docs_step.dependOn(&install_docs.step);
+    // const docs_step = b.step("docs", "Install docs into zig-out/docs");
+    // docs_step.dependOn(&install_docs.step);
 }
