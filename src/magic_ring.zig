@@ -87,10 +87,10 @@ test State {
 /// // Access the extra header fields
 /// ring.header.resolution = 44100.0;
 /// ```
-pub fn MagicRingWithHeader(comptime T: type, comptime H: type) type {
+pub fn MagicRingWithHeader(comptime T: type, comptime HeaderType: type) type {
     return struct {
         const Self = @This();
-        const Header = State.withFields(H);
+        const Header = State.withFields(HeaderType);
         const ElemSize = @sizeOf(T);
         const HeaderSize = @sizeOf(Header);
 
@@ -133,15 +133,36 @@ pub fn MagicRingWithHeader(comptime T: type, comptime H: type) type {
             const ring_buffer = switch (tag) {
                 .linux, .freebsd => blk: {
                     if (@import("builtin").link_libc) {
-                        break :blk try posixCreateRingBufferWithHeader(name, ElemSize, length, HeaderSize);
+                        break :blk try posixCreateRingBufferWithHeader(
+                            name,
+                            ElemSize,
+                            length,
+                            HeaderSize,
+                        );
                     }
-                    break :blk try memfdCreateRingBufferWithHeader(allocator.?, name, ElemSize, length, HeaderSize);
+                    break :blk try memfdCreateRingBufferWithHeader(
+                        allocator.?,
+                        name,
+                        ElemSize,
+                        length,
+                        HeaderSize,
+                    );
                     // } else {
                     //     @compileError("Must supply allocator or link libc\n");
                     // }
                 },
-                .windows => try windowsCreateRingBufferWithHeader(name, ElemSize, length, HeaderSize),
-                else => try posixCreateRingBufferWithHeader(name, ElemSize, length, HeaderSize),
+                .windows => try windowsCreateRingBufferWithHeader(
+                    name,
+                    ElemSize,
+                    length,
+                    HeaderSize,
+                ),
+                else => try posixCreateRingBufferWithHeader(
+                    name,
+                    ElemSize,
+                    length,
+                    HeaderSize,
+                ),
             };
 
             return .{
@@ -180,15 +201,36 @@ pub fn MagicRingWithHeader(comptime T: type, comptime H: type) type {
             const ring_buffer = try switch (tag) {
                 .linux, .freebsd => blk: {
                     if (@import("builtin").link_libc) {
-                        break :blk posixOpenRingBuffer(name, ElemSize, length, HeaderSize);
+                        break :blk posixOpenRingBuffer(
+                            name,
+                            ElemSize,
+                            length,
+                            HeaderSize,
+                        );
                     }
                     if (allocator) |alloca| {
-                        break :blk memfdOpenRingBuffer(alloca, name, ElemSize, length, HeaderSize);
+                        break :blk memfdOpenRingBuffer(
+                            alloca,
+                            name,
+                            ElemSize,
+                            length,
+                            HeaderSize,
+                        );
                     }
                     @compileError("Must supply allocator or link libc\n");
                 },
-                .windows => windowsOpenRingBuffer(name, ElemSize, length, HeaderSize),
-                else => posixOpenRingBuffer(name, ElemSize, length, HeaderSize),
+                .windows => windowsOpenRingBuffer(
+                    name,
+                    ElemSize,
+                    length,
+                    HeaderSize,
+                ),
+                else => posixOpenRingBuffer(
+                    name,
+                    ElemSize,
+                    length,
+                    HeaderSize,
+                ),
             };
 
             return .{

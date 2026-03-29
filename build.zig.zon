@@ -7,8 +7,8 @@
             .hash = "known_folders-0.0.0-Fy-PJtTTAADUOhGKM0sxzG4eMkNQxRvx9e5dfHVyaeA3",
         },
         .zigwin32 = .{
-            .url = "git+https://www.github.com/marlersoft/zigwin32.git#d21b419d808215e1f82605fdaddc49750bfa3bca",
-            .hash = "zigwin32-25.0.28-preview-AAAAAI0J-wP-8_KKo4Yjr33XLhVhlJmeagGUedByaOnX",
+            .url = "git+https://www.github.com/marlersoft/zigwin32.git#d8f693cd3bd7cdf5dd6501b2c5ac73ecf76791bc",
+            .hash = "zigwin32-25.0.28-preview-AAAAABN24gPsDc4ciWkn6RXrWVD-VcwIUKOyMrw3Y3yb",
         },
         .shared_memory = .{
             .url = "git+https://github.com/Peter-Barrow/shared-memory-zig/?ref=HEAD#6fb17cea5946c716b17666023a4d649fe7d09945",
@@ -19,6 +19,7 @@
         "build.zig",
         "build.zig.zon",
         "src",
+        "src/root.zig",
         "LICENSE",
         "README.md",
     },

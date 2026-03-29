@@ -31,7 +31,7 @@ pub fn build(b: *std.Build) void {
         .{
             .optimize = optimize,
             .target = target,
-            .root_source_file = b.path("src/magicrings.zig"),
+            .root_source_file = b.path("src/root.zig"),
         },
     );
 
@@ -53,23 +53,23 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
 
-    // const unit_test_check = b.addTest(
-    //     .{
-    //         .name = "test",
-    //         .root_module = b.createModule(.{
-    //             .root_source_file = b.path("src/magicrings.zig"),
-    //             .optimize = optimize,
-    //             .target = target,
-    //         }),
-    //     },
-    // );
+    const unit_test_check = b.addTest(
+        .{
+            .name = "test",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/root.zig"),
+                .optimize = optimize,
+                .target = target,
+            }),
+        },
+    );
 
-    // unit_test_check.root_module.addImport("zigwin32", zigwin32);
-    // unit_test_check.root_module.addImport("known-folders", known_folders);
-    // unit_test_check.root_module.addImport("shared_memory", shared_memory);
+    unit_test_check.root_module.addImport("zigwin32", zigwin32);
+    unit_test_check.root_module.addImport("known-folders", known_folders);
+    unit_test_check.root_module.addImport("shared_memory", shared_memory);
 
-    // const check = b.step("check", "Check if tests compiles");
-    // check.dependOn(&unit_test_check.step);
+    const check = b.step("check", "Check if tests compiles");
+    check.dependOn(&unit_test_check.step);
 
     // const install_docs = b.addInstallDirectory(.{
     //     .source_dir = lib_unit_tests.getEmittedDocs(),
