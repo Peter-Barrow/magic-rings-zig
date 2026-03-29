@@ -21,6 +21,15 @@ pub fn build(b: *std.Build) void {
     shared_memory.addImport("zigwin32", zigwin32);
     shared_memory.addImport("known-folders", known_folders);
 
+    const mod = b.addModule("magic_rings", .{
+        .root_source_file = b.path("magic_rings.zig"),
+        .target = target,
+    });
+    
+    mod.addImport("zigwin32", zigwin32);
+    mod.addImport("known-folders", known_folders);
+    mod.addImport("shared_memory", shared_memory);
+
     const use_shm_funcs = b.option(
         bool,
         "use_shm_funcs",
