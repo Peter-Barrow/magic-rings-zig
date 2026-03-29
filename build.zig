@@ -31,7 +31,7 @@ pub fn build(b: *std.Build) void {
         .{
             .optimize = optimize,
             .target = target,
-            .root_source_file = b.path("src/root.zig"),
+            .root_source_file = b.path("magic_rings.zig"),
         },
     );
 
@@ -57,7 +57,7 @@ pub fn build(b: *std.Build) void {
         .{
             .name = "test",
             .root_module = b.createModule(.{
-                .root_source_file = b.path("src/root.zig"),
+                .root_source_file = b.path("magic_rings.zig"),
                 .optimize = optimize,
                 .target = target,
             }),
