@@ -1,7 +1,7 @@
 const magic_ring = @import("src/magic_ring.zig");
 const multi_magic = @import("src/multi_magic_rings.zig");
 
-pub const MagicRing = magic_ring.MagicRingWithHeader;
+pub const MagicRing = magic_ring.MagicRing;
 pub const MultiMagicRing = multi_magic.MultiMagicRing;
 
 test "ref all decls" {
