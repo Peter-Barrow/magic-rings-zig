@@ -87,10 +87,10 @@ test State {
 /// // Access the extra header fields
 /// ring.header.resolution = 44100.0;
 /// ```
-pub fn MagicRingWithHeader(comptime T: type, comptime HeaderType: type) type {
+pub fn MagicRing(comptime T: type, comptime HeaderExtra: ?type) type {
     return struct {
         const Self = @This();
-        const Header = State.withFields(HeaderType);
+        const Header = if (HeaderExtra) |H| State.withFields(H) else State;
         const ElemSize = @sizeOf(T);
         const HeaderSize = @sizeOf(Header);
 
@@ -414,7 +414,7 @@ pub fn MagicRingWithHeader(comptime T: type, comptime HeaderType: type) type {
 
 test "Magic Ring Buffer" {
     const Extra = struct { resolution: f64, num_fields: u32 };
-    const Ring = MagicRingWithHeader(u64, Extra);
+    const Ring = MagicRing(u64, Extra);
 
     // Initialize allocator
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -888,7 +888,11 @@ pub fn posixCreateRingBufferWithHeader(
     header_size: usize,
 ) !RingBufferInfo {
     // Calculate the memory layout
-    const layout = try RingBufferLayout.init(element_size, element_count, header_size);
+    const layout = try RingBufferLayout.init(
+        element_size,
+        element_count,
+        header_size,
+    );
 
     // std.debug.print("Creating POSIX ring buffer with layout:\n", .{});
     // layout.formatDebug();
@@ -903,7 +907,11 @@ pub fn posixCreateRingBufferWithHeader(
 
     const protection = std.posix.PROT.READ | std.posix.PROT.WRITE;
 
-    const mirror = try posixMagicRing(shmem, layout.header_size_aligned, protection);
+    const mirror = try posixMagicRing(
+        shmem,
+        layout.header_size_aligned,
+        protection,
+    );
 
     var mapping: Mapping = .{
         .shared = shmem,

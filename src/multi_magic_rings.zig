@@ -1,5 +1,5 @@
 const std = @import("std");
-const MagicRingWithHeader = @import("magic_ring.zig").MagicRingWithHeader;
+const MagicRing = @import("magic_ring.zig").MagicRing;
 const State = @import("magic_ring.zig").State;
 const RingBufferLayout = @import("magic_ring.zig").RingBufferLayout;
 const getAllocationGranularity = @import("magic_ring.zig").getAllocationGranularity;
@@ -201,7 +201,7 @@ test allocationStrategy {
 ///   var ring = try MultiRing.create("points", 1000, allocator);
 ///   _ = ring.push(Point{ .x = 1.0, .y = 2.0, .timestamp = 12345 });
 ///   ```
-pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
+pub fn MultiMagicRing(comptime T: type, comptime HeaderExtra: ?type) type {
     const info = switch (@typeInfo(T)) {
         .@"struct" => |info| info,
         else => @compileError("Must be a struct"),
@@ -209,7 +209,7 @@ pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
 
     return struct {
         const Self = @This();
-        // const Header = State.withFields(H);
+        // const Header = if (HeaderExtra) |H| State.withFields(H) else State;
 
         const Fields = std.meta.FieldEnum(T);
 
@@ -274,7 +274,7 @@ pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
         const RingBuffers = blk: {
             var fields: [info.fields.len]std.builtin.Type.StructField = undefined;
             for (info.fields, &fields) |ifield, *field| {
-                const RingType = MagicRingWithHeader(ifield.type, H);
+                const RingType = MagicRing(ifield.type, HeaderExtra);
                 field.* = std.builtin.Type.StructField{
                     .name = ifield.name,
                     .type = RingType,
@@ -337,7 +337,7 @@ pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
 
                 const strat = strategyForType(field.type, strategies);
 
-                const ring = try MagicRingWithHeader(field.type, H).create(
+                const ring = try MagicRing(field.type, HeaderExtra).create(
                     ring_name,
                     strat.element_count,
                     allocator,
@@ -385,7 +385,7 @@ pub fn MultiMagicRing(comptime T: type, comptime H: type) type {
                     .{ name, field.name },
                 );
 
-                const ring = try MagicRingWithHeader(field.type, H).open(
+                const ring = try MagicRing(field.type, HeaderExtra).open(
                     ring_name,
                     allocator,
                 );
