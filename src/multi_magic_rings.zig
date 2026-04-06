@@ -271,7 +271,7 @@ pub fn MultiMagicRing(comptime T: type, comptime HeaderExtra: ?type) type {
         /// Converts a type 'T', a struct with fields, to a 'Struct-of-Rings' formulism.
         /// Each field becomes a MagicRingWithHeader of its corresponding type, providing individual
         /// ring buffer management for each field while maintaining type safety and unified operations.
-        const RingBuffers = blk: {
+        pub const RingBuffers = blk: {
             var fields: [info.fields.len]std.builtin.Type.StructField = undefined;
             for (info.fields, &fields) |ifield, *field| {
                 const RingType = MagicRing(ifield.type, HeaderExtra);
