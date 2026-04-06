@@ -90,7 +90,7 @@ test State {
 pub fn MagicRing(comptime T: type, comptime HeaderExtra: ?type) type {
     return struct {
         const Self = @This();
-        const Header = if (HeaderExtra) |H| State.withFields(H) else State;
+        pub const Header = if (HeaderExtra) |H| State.withFields(H) else State;
         const ElemSize = @sizeOf(T);
         const HeaderSize = @sizeOf(Header);
 

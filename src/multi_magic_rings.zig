@@ -222,7 +222,7 @@ pub fn MultiMagicRing(comptime T: type, comptime HeaderExtra: ?type) type {
         /// Each field becomes a slice of its corresponding type, allowing for efficient
         /// batch operations on columnar data. Used by slice operations to return
         /// synchronized views across all field ring buffers.
-        const Slice = blk: {
+        pub const Slice = blk: {
             var fields: [info.fields.len]std.builtin.Type.StructField = undefined;
             for (info.fields, &fields) |f, *field| {
                 field.* = .{
